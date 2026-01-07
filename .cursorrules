@@ -1,0 +1,148 @@
+# BlueVault Project Rules for Cursor AI
+
+## Project Context
+
+BlueVault is a Rust-based TUI application for managing Blu-ray archives. The display name is "BlueVault" but the binary/internal paths use "bdarchive".
+
+## Important Conventions
+
+1. **Naming**:
+   - Display name: "BlueVault" (user-facing text)
+   - Binary name: `bdarchive` (CLI tool name)
+   - Internal paths: `bdarchive` (config/data dirs use `~/.config/bdarchive/`)
+
+2. **Theme System**:
+   - Default theme: Phosphor (80s green CRT aesthetic)
+   - Supports Amber and Mono themes
+   - Check `src/theme.rs` for theme implementation
+   - Themes respect environment variables: `TUI_THEME`, `TUI_NO_ANIM`, `TUI_REDUCED_MOTION`
+
+3. **UI Patterns**:
+   - Use `GridLayout` helpers from `src/ui/layout.rs` for stable layouts
+   - Always use theme colors, never hardcoded colors
+   - Header/footer patterns: use `ui::header_footer::Header` and `Footer`
+   - Animations: use `AnimationThrottle` from `ui/animations.rs`
+
+4. **TUI Screens**:
+   - All TUI screens in `src/tui/`
+   - Render methods: `render(&mut self, theme: &Theme, frame: &mut Frame, area: Rect)`
+   - Always pass theme to render methods
+   - Use consistent keybindings (see DEVELOPMENT.md)
+
+5. **Directory Selector**:
+   - Custom implementation in `src/tui/directory_selector_simple.rs`
+   - Dual-mode: input box (always visible) + browser (lazy loaded)
+   - Default focus: Input box
+   - Tab toggles focus between input and browser
+   - Browser loads entries only when focused (lazy loading)
+
+6. **Error Handling**:
+   - Use `anyhow::Result` for most operations
+   - Use `tracing` for logging (not `println!`)
+   - Show user-friendly errors in TUI
+   - Log detailed errors to log files
+
+7. **Command Execution**:
+   - Always use `commands::execute_command()` from `src/commands.rs`
+   - Never use shell strings - use argument arrays
+   - Check dependencies before using external tools
+
+8. **Database**:
+   - Use `database::*` functions from `src/database.rs`
+   - Schema in `migrate_database()` function
+   - All migrations are versioned
+
+9. **Paths**:
+   - User data: `~/.local/share/bdarchive/` (via `paths::*`)
+   - User config: `~/.config/bdarchive/` (via `paths::*`)
+   - Never hardcode paths
+
+10. **State Management**:
+    - Main state in `AppState` enum in `src/main.rs`
+    - Careful borrow checker handling (extract values before operations)
+    - Helper functions: `start_disc_creation_internal()`, `start_verification_internal()`
+
+## Common Patterns
+
+### Adding a New TUI Screen
+
+```rust
+// 1. Create file: src/tui/new_screen.rs
+pub struct NewScreen { /* ... */ }
+
+impl NewScreen {
+    pub fn render(&mut self, theme: &Theme, frame: &mut Frame, area: Rect) {
+        // Use theme colors
+        // Use GridLayout for stable layouts
+    }
+}
+
+// 2. Add to src/tui/mod.rs
+pub mod new_screen;
+pub use new_screen::NewScreen;
+
+// 3. Add to AppState enum in src/main.rs
+NewScreen(NewScreen),
+
+// 4. Add render case
+NewScreen(ref mut screen) => {
+    screen.render(&self.theme, frame, content_area);
+}
+
+// 5. Add key handling
+AppState::NewScreen(ref mut screen) => {
+    // Handle keys
+}
+```
+
+### Using Theme Colors
+
+```rust
+use crate::theme::Theme;
+
+// Get colors
+let primary_color = theme.primary();
+let bg_color = theme.bg();
+
+// Use styles
+let style = theme.primary_style();
+let error_style = theme.error_style();
+let highlight_style = theme.highlight_style();
+```
+
+### Safe Command Execution
+
+```rust
+use crate::commands::execute_command;
+
+// Good: argument array
+execute_command("xorriso", &["-as", "mkisofs", "-r", "-J", ...])?;
+
+// Bad: shell string (NEVER DO THIS)
+// execute_command("sh", &["-c", "xorriso -as mkisofs ..."])?;
+```
+
+## Testing
+
+- Run `cargo test` before committing
+- Run `cargo clippy` to check for issues
+- Test TUI changes in real terminal (not just tests)
+- Test with reduced motion: `TUI_NO_ANIM=1 cargo run`
+- Test with mono theme: `TUI_THEME=mono cargo run`
+
+## Documentation
+
+- Update README.md for user-facing changes
+- Update DEVELOPMENT.md for developer-facing changes
+- Update CHANGELOG.md for notable changes
+- Keep code comments up to date
+
+## Key Files
+
+- `src/main.rs`: Main application, event loop, state management
+- `src/tui/new_disc.rs`: New disc creation flow (most complex screen)
+- `src/tui/directory_selector_simple.rs`: Directory selection widget
+- `src/theme.rs`: Theme system implementation
+- `src/database.rs`: Database operations
+- `DEVELOPMENT.md`: Full developer context
+
