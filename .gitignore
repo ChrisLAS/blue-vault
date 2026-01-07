@@ -29,8 +29,10 @@ logs/
 
 # Dependencies
 vendor/
-Cargo.lock
 go.sum
+
+# Note: Cargo.lock should be committed for binary applications (like this one)
+# It ensures reproducible builds across different environments
 
 # Test coverage
 coverage/
