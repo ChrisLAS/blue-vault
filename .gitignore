@@ -1,0 +1,48 @@
+# Build artifacts
+target/
+dist/
+build/
+*.o
+*.so
+*.dylib
+*.dll
+
+# Compiled binaries
+blue-vault
+bluevault
+*.exe
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Dependencies
+vendor/
+Cargo.lock
+go.sum
+
+# Test coverage
+coverage/
+*.prof
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# User data directory (contains database, config, etc.)
+# This is outside the repo, but listed here for reference
+# ~/.local/share/bdarchive/
+# ~/.config/bdarchive/
+
