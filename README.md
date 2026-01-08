@@ -2,7 +2,7 @@
 
 A production-quality TUI application for managing Blu-ray "cold storage" archives on Linux.
 
-![BlueVault](https://img.shields.io/badge/version-0.1.0-blue) ![Rust](https://img.shields.io/badge/rust-1.70%2B-orange) ![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-green)
+![BlueVault](https://img.shields.io/badge/version-0.1.0-blue) ![Rust](https://img.shields.io/badge/rust-1.70%2B-orange) ![License](https://img.shields.io/badge/license-GPL--2.0-green)
 
 ![BlueVault Screenshot](bluevaulscreen1.jpg)
 
@@ -360,7 +360,9 @@ cargo fmt
 
 ## License
 
-MIT OR Apache-2.0
+GNU General Public License v2.0 (GPL-2.0)
+
+See [LICENSE](LICENSE) file for the full license text.
 
 ## Contributing
 

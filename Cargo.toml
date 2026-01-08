@@ -3,7 +3,7 @@ name = "bdarchive"
 version = "0.1.0"
 edition = "2021"
 description = "BlueVault - A TUI application for managing Blu-ray cold storage archives on Linux"
-license = "MIT OR Apache-2.0"
+license = "GPL-2.0-only"
 authors = ["Your Name <you@example.com>"]
 
 [dependencies]

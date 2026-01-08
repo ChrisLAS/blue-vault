@@ -67,7 +67,7 @@
           meta = with pkgs.lib; {
             description = "BlueVault - A TUI application for managing Blu-ray cold storage archives on Linux";
             homepage = "https://github.com/ChrisLAS/blue-vault";
-            license = with licenses; [ mit asl20 ];
+            license = licenses.gpl2Only;
             maintainers = [ ];
             platforms = platforms.linux;
           };
