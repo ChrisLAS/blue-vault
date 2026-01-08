@@ -122,7 +122,66 @@ impl App {
                                 flow.next_step();
                             }
                             tui::new_disc::NewDiscStep::SelectFolders => {
-                                // Only proceed to next step if folders are selected
+                                // Initialize selector if needed
+                                if flow.directory_selector_mut().is_none() {
+                                    if let Err(e) = flow.init_directory_selector() {
+                                        flow.set_error(format!("Failed to initialize directory selector: {}", e));
+                                        return Ok(true);
+                                    }
+                                }
+                                
+                                // Handle Enter based on focus - extract what we need first
+                                let path_to_add: Option<PathBuf> = {
+                                    if let Some(ref mut selector) = flow.directory_selector_mut() {
+                                        match selector.focus() {
+                                            DirFocus::Browser => {
+                                                // Enter key in browser: add the highlighted directory to source folders
+                                                // For "..", navigate up instead
+                                                if let Some(selected_path) = selector.get_browser_selection() {
+                                                    let current_path = selector.current_path().to_path_buf();
+                                                    
+                                                    // Check if this is ".." (parent)
+                                                    if let Some(parent) = current_path.parent() {
+                                                        if selected_path == parent {
+                                                            // This is ".." - navigate up
+                                                            let _ = selector.browser_enter();
+                                                            return Ok(true);
+                                                        }
+                                                    }
+                                                    
+                                                    // This is a directory - add it to source folders
+                                                    Some(selected_path)
+                                                } else {
+                                                    None
+                                                }
+                                            }
+                                            DirFocus::Input => {
+                                                // Enter key in input box: commit path
+                                                match selector.commit_input() {
+                                                    Ok(path) => {
+                                                        selector.clear_error();
+                                                        selector.clear_input_buffer();
+                                                        Some(path)
+                                                    }
+                                                    Err(_) => {
+                                                        // Error already set in selector
+                                                        None
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        None
+                                    }
+                                };
+                                
+                                // Add path to source folders if we got one
+                                if let Some(path) = path_to_add {
+                                    flow.add_source_folder(path);
+                                    return Ok(true);
+                                }
+                                
+                                // Only proceed to next step if folders are selected (and Enter wasn't handled above)
                                 if !flow.source_folders().is_empty() {
                                     flow.next_step();
                                 }
@@ -163,12 +222,67 @@ impl App {
                             }
                         }
                     }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        match flow.current_step() {
+                            tui::new_disc::NewDiscStep::SelectFolders => {
+                                // Navigate browser if focused
+                                if let Some(ref mut selector) = flow.directory_selector_mut() {
+                                    if selector.focus() == DirFocus::Browser {
+                                        selector.browser_up();
+                                        return Ok(true);
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        match flow.current_step() {
+                            tui::new_disc::NewDiscStep::SelectFolders => {
+                                // Navigate browser if focused
+                                if let Some(ref mut selector) = flow.directory_selector_mut() {
+                                    if selector.focus() == DirFocus::Browser {
+                                        selector.browser_down();
+                                        return Ok(true);
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    KeyCode::Right => {
+                        match flow.current_step() {
+                            tui::new_disc::NewDiscStep::SelectFolders => {
+                                // Navigate INTO directory in browser
+                                if let Some(ref mut selector) = flow.directory_selector_mut() {
+                                    if selector.focus() == DirFocus::Browser {
+                                        // Navigate into the selected directory (if it's a directory, not "..")
+                                        if let Some(selected_path) = selector.get_browser_selection() {
+                                            let current_path = selector.current_path().to_path_buf();
+                                            // Check if this is ".." (parent)
+                                            if let Some(parent) = current_path.parent() {
+                                                if selected_path == parent {
+                                                    // This is ".." - don't navigate into it
+                                                    return Ok(true);
+                                                }
+                                            }
+                                            // Navigate into the selected directory
+                                            selector.set_current_path(selected_path).ok();
+                                        }
+                                        return Ok(true);
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
                     KeyCode::Tab => {
                         match flow.current_step() {
                             tui::new_disc::NewDiscStep::SelectFolders => {
                                 // Tab toggles focus between input and browser
                                 if let Some(ref mut selector) = flow.directory_selector_mut() {
                                     selector.toggle_focus();
+                                    return Ok(true);
                                 }
                             }
                             _ => {}

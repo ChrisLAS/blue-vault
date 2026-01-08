@@ -4,6 +4,8 @@ A production-quality TUI application for managing Blu-ray "cold storage" archive
 
 ![BlueVault](https://img.shields.io/badge/version-0.1.0-blue) ![Rust](https://img.shields.io/badge/rust-1.70%2B-orange) ![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-green)
 
+![BlueVault Screenshot](bluevaulscreen1.jpg)
+
 ## Overview
 
 BlueVault is a terminal-based application that helps you create long-term archives on Blu-ray discs. It provides a complete workflow from selecting folders to burning discs, with built-in verification, indexing, and search capabilities. The application features a retro 80s "phosphor green" terminal aesthetic that makes long archiving sessions comfortable and visually distinct.

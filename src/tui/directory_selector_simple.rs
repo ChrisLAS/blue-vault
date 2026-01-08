@@ -4,7 +4,7 @@
 
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, Paragraph, List, ListItem},
+    widgets::{Block, Borders, BorderType, Paragraph, List, ListItem},
 };
 use std::path::{Path, PathBuf};
 use std::fs;
@@ -279,10 +279,11 @@ impl DirectorySelector {
         };
         
         // Split area: input box at top, browser below
+        // Give input box enough height for borders, title, and content (at least 5 lines)
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(4),  // Input box
+                Constraint::Length(5),  // Input box (borders + title + content)
                 Constraint::Min(10),    // Browser
             ])
             .split(area);
@@ -299,25 +300,33 @@ impl DirectorySelector {
     fn render_input_box(&self, theme: &Theme, frame: &mut Frame, area: Rect) {
         let is_focused = self.focus == Focus::Input;
         
-        let input_display = if self.input_buffer.is_empty() {
+        // Always show placeholder text when empty - make it clearly visible
+        // Use a clear label format to ensure it's always rendered
+        let input_line = if self.input_buffer.is_empty() {
             "Enter folder path..."
         } else {
-            &self.input_buffer
+            self.input_buffer.as_str()
         };
 
-        let error_line = if let Some(ref error) = self.error_message {
-            format!("\n[ERR] {}", error)
+        // Format error line separately (only if present)
+        let error_section = if let Some(ref error) = self.error_message {
+            format!("\n\n[ERR] {}", error)
         } else {
             String::new()
         };
 
-        let text = format!(
-            "Folder Path:\n{}\n{}",
-            input_display,
-            error_line
-        );
+        // Build text content - ensure there's always visible content on the first line
+        // Put placeholder/input on first line, error on subsequent lines
+        let text_content = format!("{}{}", input_line, error_section);
 
-        // Always show input box with clear focus indication
+        // Use double border when focused for clear visibility
+        let border_type = if is_focused {
+            BorderType::Double
+        } else {
+            BorderType::Plain
+        };
+
+        // Bold, bright border style when focused
         let border_style = if is_focused {
             theme.primary_style().add_modifier(ratatui::style::Modifier::BOLD)
         } else {
@@ -325,23 +334,29 @@ impl DirectorySelector {
         };
 
         let title = if is_focused { 
-            "Folder Path [FOCUSED] - Type path and press Enter" 
+            " Folder Path [ACTIVE] - Type path and press Enter "
         } else { 
-            "Folder Path - Press Tab to focus here"
+            " Folder Path - Press Tab to focus here "
         };
 
         let block = Block::default()
             .title(title)
+            .title_alignment(ratatui::layout::Alignment::Left)
             .borders(Borders::ALL)
+            .border_type(border_type)
             .border_style(border_style);
 
-        let para = Paragraph::new(text)
+        // Always use primary style for text to ensure it's clearly visible
+        // The border (double when focused) indicates focus state
+        let text_style = theme.primary_style();
+
+        // Always render with explicit alignment - ensure text is visible
+        // Use wrap to ensure long paths don't break the layout
+        let para = Paragraph::new(text_content)
             .block(block)
-            .style(if is_focused {
-                theme.primary_style()
-            } else {
-                theme.secondary_style()
-            });
+            .style(text_style)
+            .alignment(ratatui::layout::Alignment::Left)
+            .wrap(ratatui::widgets::Wrap { trim: true });
 
         frame.render_widget(para, area);
     }

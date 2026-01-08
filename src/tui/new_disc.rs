@@ -157,6 +157,8 @@ impl NewDiscFlow {
             NewDiscStep::EnterDiscId => NewDiscStep::EnterNotes,
             NewDiscStep::EnterNotes => {
                 self.commit_input();
+                // Initialize directory selector when entering SelectFolders step
+                let _ = self.init_directory_selector();
                 NewDiscStep::SelectFolders
             }
             NewDiscStep::SelectFolders => NewDiscStep::Review,
@@ -233,6 +235,11 @@ impl NewDiscFlow {
                 frame.render_widget(para, chunks[0]);
             }
             NewDiscStep::SelectFolders => {
+                // Ensure directory selector is initialized
+                if self.directory_selector.is_none() {
+                    let _ = self.init_directory_selector();
+                }
+                
                 // Split into three sections: selected folders, directory selector, instructions
                 let chunks = Layout::default()
                     .direction(Direction::Vertical)
@@ -274,16 +281,16 @@ impl NewDiscFlow {
                         // This is handled by the main loop, but we can trigger it
                     }
                 } else {
-                    // Fallback if selector not initialized - show message
-                    let text = "Directory selector not initialized.\nPress any key to continue...";
+                    // Fallback if selector initialization failed - show message
+                    let text = "Directory selector initialization failed.\nPress any key to continue...";
                     let para = Paragraph::new(text)
                         .block(
                             Block::default()
                                 .title("Directory Selector")
                                 .borders(Borders::ALL)
-                                .border_style(theme.border_style())
+                                .border_style(theme.error_style())
                         )
-                        .style(theme.warning_style());
+                        .style(theme.error_style());
                     frame.render_widget(para, chunks[1]);
                 }
                 
