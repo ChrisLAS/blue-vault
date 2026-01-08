@@ -84,6 +84,43 @@ The theme system supports:
 
 ### Installation
 
+#### Option 1: Using Nix Flake (Recommended for NixOS)
+
+1. **Run directly:**
+```bash
+nix run github:ChrisLAS/blue-vault
+```
+
+2. **Build and install:**
+```bash
+# Build the package
+nix build github:ChrisLAS/blue-vault
+
+# Install to your user profile
+nix profile install github:ChrisLAS/blue-vault
+
+# Or if you have the repository cloned:
+cd bluevault
+nix profile install .
+```
+
+3. **Add to your system configuration (NixOS):**
+```nix
+environment.systemPackages = [
+  (builtins.getFlake "github:ChrisLAS/blue-vault").packages.${system}.default
+];
+```
+
+4. **Development environment:**
+```bash
+nix develop github:ChrisLAS/blue-vault
+# or if cloned:
+cd bluevault
+nix develop
+```
+
+#### Option 2: Manual Build (Other Linux Distributions)
+
 1. **Install system dependencies:**
 
 ```bash
