@@ -71,7 +71,7 @@ The theme system supports:
 ### Prerequisites
 
 **Required:**
-- Linux (tested on Debian/Ubuntu, Fedora/RHEL)
+- Linux (tested on NixOS)
 - Rust 1.70+ and Cargo
 - `xorriso` - ISO image creation
 - `growisofs` - Blu-ray burning (from `dvd+rw-tools` package)
