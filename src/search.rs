@@ -100,7 +100,22 @@ mod tests {
     fn test_search_files() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let db_path = temp_dir.path().join("test.db");
-        let conn = database::init_database(&db_path)?;
+        let mut conn = database::init_database(&db_path)?;
+
+        // Insert test disc first (required for foreign key constraint)
+        let disc = crate::database::Disc {
+            disc_id: "2024-BD-001".to_string(),
+            volume_label: "TEST_DISC".to_string(),
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            notes: Some("Test disc".to_string()),
+            iso_size: Some(1024),
+            burn_device: Some("/dev/sr0".to_string()),
+            checksum_manifest_hash: None,
+            qr_path: None,
+            source_roots: None,
+            tool_version: None,
+        };
+        crate::database::Disc::insert(&mut conn, &disc)?;
 
         // Insert test file
         let file = crate::database::FileRecord {
@@ -113,7 +128,7 @@ mod tests {
             added_at: "2024-01-01T00:00:00Z".to_string(),
         };
 
-        crate::database::FileRecord::insert(&conn, &file)?;
+        crate::database::FileRecord::insert(&mut conn, &file)?;
 
         // Search by substring
         let query = SearchQuery {

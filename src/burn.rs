@@ -13,10 +13,14 @@ pub fn burn_with_method(source_path: &Path, device: &str, dry_run: bool, method:
     match method {
         "iso" => {
             info!("Burning ISO to device: {} -> {} (dry_run: {})", source_path.display(), device, dry_run);
-            // Validate ISO exists
-            info!("Validating ISO file: {}", source_path.display());
-            crate::paths::validate_file(source_path).context("ISO file validation failed")?;
-            info!("ISO validation passed");
+            // Validate ISO exists (skip in dry run mode)
+            if !dry_run {
+                info!("Validating ISO file: {}", source_path.display());
+                crate::paths::validate_file(source_path).context("ISO file validation failed")?;
+                info!("ISO validation passed");
+            } else {
+                info!("Skipping ISO validation (dry run)");
+            }
         }
         "direct" => {
             info!("Burning directory directly to device: {} -> {} (dry_run: {})", source_path.display(), device, dry_run);
