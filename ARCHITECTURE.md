@@ -75,6 +75,7 @@ bluevault/
 - Check capacity before staging
 - Map source folders to /ARCHIVE/<name> layout
 - Handle errors and resume capability
+- Auto-cleanup staging directory after successful/failed burns
 
 ### disc.rs
 - Generate DISC_INFO.txt with metadata
@@ -134,7 +135,8 @@ bluevault/
 ### tui/
 - Ratatui-based TUI components
 - State management for each screen
-- Keyboard navigation
+- Keyboard navigation (vim keys, arrow keys)
+- Universal quit key ('Q') works from all screens
 - Progress indicators for long operations
 
 ## Database Schema
