@@ -146,7 +146,12 @@ impl NewDiscFlow {
         match self.current_step {
             NewDiscStep::EnterDiscId => {
                 if !self.input_buffer.is_empty() {
-                    self.disc_id = self.input_buffer.clone();
+                    let validation = Self::validate_disc_id(&self.input_buffer);
+                    if validation.is_empty() {
+                        // Valid custom ID, use it
+                        self.disc_id = self.input_buffer.clone();
+                    }
+                    // If invalid, keep the default ID
                 }
             }
             NewDiscStep::EnterNotes => {
@@ -216,6 +221,41 @@ impl NewDiscFlow {
         self.status_message = message;
     }
 
+    /// Validate a custom disc ID for basic constraints
+    fn validate_disc_id(disc_id: &str) -> String {
+        // Check length
+        if disc_id.is_empty() {
+            return "Disc ID cannot be empty".to_string();
+        }
+
+        if disc_id.len() > 50 {
+            return "Disc ID too long (max 50 characters)".to_string();
+        }
+
+        // Check for invalid characters (filesystem-safe)
+        let invalid_chars = ['/', '\\', ':', '*', '?', '"', '<', '>', '|', '\0'];
+        for &ch in disc_id.chars().collect::<Vec<char>>().as_slice() {
+            if invalid_chars.contains(&ch) {
+                return format!("Invalid character '{}' in disc ID", ch);
+            }
+        }
+
+        // Check for control characters
+        if disc_id.chars().any(|c| c.is_control() && c != '\n' && c != '\t') {
+            return "Disc ID contains invalid control characters".to_string();
+        }
+
+        // Check for reserved names (basic check)
+        let reserved_names = ["CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4",
+                             "LPT1", "LPT2", "LPT3", "LPT4"];
+        if reserved_names.contains(&disc_id.to_uppercase().as_str()) {
+            return "Disc ID uses a reserved system name".to_string();
+        }
+
+        // All checks passed
+        String::new()
+    }
+
     pub fn set_error(&mut self, error: String) {
         let error_clone = error.clone();
         self.error_message = Some(error);
@@ -245,13 +285,39 @@ impl NewDiscFlow {
                 } else {
                     &self.input_buffer
                 };
+
+                // Validate the current input
+                let validation_msg = if !self.input_buffer.is_empty() {
+                    Self::validate_disc_id(&self.input_buffer)
+                } else {
+                    String::new()
+                };
+
+                let id_label = if self.input_buffer.is_empty() {
+                    "Disc ID (auto-generated):"
+                } else {
+                    "Disc ID (custom):"
+                };
+
+                let instructions = if validation_msg.is_empty() {
+                    "Type to customize, [Enter] Accept, [Esc] Cancel".to_string()
+                } else {
+                    format!("❌ {} - [Enter] Use default '{}', [Esc] Cancel", validation_msg, self.disc_id)
+                };
+
                 let text = format!(
-                    "Disc ID: {}\n\nType to edit, [Enter] Continue, [Esc] Cancel",
-                    display_id
+                    "{} {}\n\n{}",
+                    id_label,
+                    display_id,
+                    instructions
                 );
                 let para = Paragraph::new(text)
                     .block(block)
-                    .style(theme.primary_style());
+                    .style(if validation_msg.is_empty() {
+                        theme.primary_style()
+                    } else {
+                        theme.error_style()
+                    });
                 frame.render_widget(para, chunks[0]);
             }
             NewDiscStep::EnterNotes => {

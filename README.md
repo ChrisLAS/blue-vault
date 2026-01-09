@@ -58,6 +58,7 @@ The theme system supports:
 - ✅ **Automatic Cleanup**: Staging files removed after successful/failed burns
 - ✅ **Universal Quit Key**: 'Q' quits from any screen, 'Esc' navigates back
 - ✅ **Dry Run Testing**: Creates actual ISO files for burn simulation
+- ✅ **Custom Disc IDs**: User-defined names with validation, or auto-generated sequences
 - ✅ **Automatic Disc ID Sequencing**: Database-aware unique ID generation
 
 ### User Interface
@@ -242,7 +243,7 @@ On first run, BlueVault will:
 #### Creating a New Disc
 
 1. Select "New Disc / Archive Folders" from the main menu
-2. Enter or accept the auto-generated disc ID (e.g., `2024-BD-001`)
+2. Enter or accept the auto-generated disc ID (e.g., `2026-BD-001`), or type a custom name
 3. Add optional notes
 4. Select source folders using:
    - **Input box**: Type full paths manually (default, always visible)
