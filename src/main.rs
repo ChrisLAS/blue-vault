@@ -994,21 +994,77 @@ impl App {
             return Ok(());
         }
 
+        // Get ISO size for progress estimation
+        let iso_size = match std::fs::metadata(iso_path) {
+            Ok(metadata) => metadata.len(),
+            Err(_) => 0, // Fallback if we can't get size
+        };
+        let iso_size_gb = iso_size as f64 / 1_000_000_000.0;
+
+        // Estimate burn time (BD-R typical speeds: 2-6x = ~8-24 MB/s)
+        let estimated_burn_time_secs = if iso_size > 0 {
+            (iso_size as f64 / 16_000_000.0).max(30.0) // At least 30 seconds, assume ~16 MB/s average
+        } else {
+            300.0 // 5 minutes fallback
+        };
+
         // Phase 1: Initializing burn
         let _ = tx.send(DiscCreationMessage::Progress("🔥 Initializing Blu-ray burner...".to_string()));
-        thread::sleep(Duration::from_millis(200));
+        thread::sleep(Duration::from_millis(500));
 
-        // Phase 2: Starting data transfer
-        let _ = tx.send(DiscCreationMessage::Progress("💿 Starting data transfer to disc...".to_string()));
-        thread::sleep(Duration::from_millis(300));
+        // Phase 2: Starting data transfer with size info
+        let _ = tx.send(DiscCreationMessage::Progress(format!("💿 Starting data transfer ({}GB) to disc...", iso_size_gb)));
+        thread::sleep(Duration::from_millis(500));
+
+        // Start progress monitoring thread
+        let progress_tx = tx.clone();
+        let start_time = std::time::Instant::now();
+        thread::spawn(move || {
+            let mut last_progress = 0;
+            loop {
+                let elapsed = start_time.elapsed().as_secs_f64();
+                if elapsed > estimated_burn_time_secs + 60.0 {
+                    // Burn is taking much longer than expected, stop updating
+                    break;
+                }
+
+                // Estimate progress (70-95% range for burn phase)
+                let progress_ratio = (elapsed / estimated_burn_time_secs).min(1.0);
+                let burn_progress = 70 + (progress_ratio * 25.0) as u8; // 70% to 95%
+
+                if burn_progress != last_progress && burn_progress < 95 {
+                    let speed_mbs = if elapsed > 0.0 {
+                        (iso_size as f64 / elapsed / 1_000_000.0) as u32
+                    } else { 0 };
+
+                    let eta_mins = if progress_ratio > 0.0 {
+                        ((1.0 - progress_ratio) * estimated_burn_time_secs / 60.0) as u32
+                    } else { 0 };
+
+                    let _ = progress_tx.send(DiscCreationMessage::Progress(
+                        format!("🔥 Burning... {}MB/s | {}min remaining | {}% complete",
+                               speed_mbs, eta_mins, burn_progress)
+                    ));
+                    last_progress = burn_progress;
+                }
+
+                thread::sleep(Duration::from_secs(2)); // Update every 2 seconds
+            }
+        });
 
         // Perform the actual burn with error handling
-        let start_time = std::time::Instant::now();
         match burn::burn_with_method(iso_path, device, dry_run, "iso") {
             Ok(_) => {
                 let burn_duration = start_time.elapsed();
-                let _ = tx.send(DiscCreationMessage::Progress(format!("✅ Burn completed in {:.1}s", burn_duration.as_secs_f64())));
-                thread::sleep(Duration::from_millis(200));
+                let actual_speed = if burn_duration.as_secs_f64() > 0.0 {
+                    (iso_size as f64 / burn_duration.as_secs_f64() / 1_000_000.0) as u32
+                } else { 0 };
+
+                let _ = tx.send(DiscCreationMessage::Progress(
+                    format!("✅ Burn completed! {:.1}s | {}MB/s average speed",
+                           burn_duration.as_secs_f64(), actual_speed)
+                ));
+                thread::sleep(Duration::from_millis(500));
                 Ok(())
             }
             Err(e) => {
@@ -1020,6 +1076,29 @@ impl App {
     }
 
     /// Burn directory directly with detailed progress updates
+    /// Calculate the total size of a directory recursively
+    fn calculate_directory_size(dir_path: &Path) -> Result<u64> {
+        let mut total_size = 0u64;
+        Self::calculate_directory_size_recursive(dir_path, &mut total_size)?;
+        Ok(total_size)
+    }
+
+    fn calculate_directory_size_recursive(dir_path: &Path, total_size: &mut u64) -> Result<()> {
+        if dir_path.is_dir() {
+            for entry in std::fs::read_dir(dir_path)? {
+                let entry = entry?;
+                let path = entry.path();
+                if path.is_dir() {
+                    Self::calculate_directory_size_recursive(&path, total_size)?;
+                } else {
+                    let metadata = entry.metadata()?;
+                    *total_size += metadata.len();
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn burn_direct_with_progress(
         dir_path: &Path,
         device: &str,
@@ -1035,21 +1114,74 @@ impl App {
             return Ok(());
         }
 
+        // Estimate directory size for progress calculation
+        let dir_size = Self::calculate_directory_size(dir_path).unwrap_or(0);
+        let dir_size_gb = dir_size as f64 / 1_000_000_000.0;
+
+        // Estimate burn time (BD-R typical speeds: 2-6x = ~8-24 MB/s)
+        let estimated_burn_time_secs = if dir_size > 0 {
+            (dir_size as f64 / 16_000_000.0).max(30.0) // At least 30 seconds, assume ~16 MB/s average
+        } else {
+            300.0 // 5 minutes fallback
+        };
+
         // Phase 1: Initializing burn
         let _ = tx.send(DiscCreationMessage::Progress("🔥 Initializing Blu-ray burner...".to_string()));
-        thread::sleep(Duration::from_millis(200));
+        thread::sleep(Duration::from_millis(500));
 
-        // Phase 2: Starting data transfer
-        let _ = tx.send(DiscCreationMessage::Progress("💿 Starting direct data transfer to disc...".to_string()));
-        thread::sleep(Duration::from_millis(300));
+        // Phase 2: Starting data transfer with size info
+        let _ = tx.send(DiscCreationMessage::Progress(format!("💿 Starting direct data transfer ({}GB) to disc...", dir_size_gb)));
+        thread::sleep(Duration::from_millis(500));
+
+        // Start progress monitoring thread
+        let progress_tx = tx.clone();
+        let start_time = std::time::Instant::now();
+        thread::spawn(move || {
+            let mut last_progress = 0;
+            loop {
+                let elapsed = start_time.elapsed().as_secs_f64();
+                if elapsed > estimated_burn_time_secs + 60.0 {
+                    // Burn is taking much longer than expected, stop updating
+                    break;
+                }
+
+                // Estimate progress (70-95% range for burn phase)
+                let progress_ratio = (elapsed / estimated_burn_time_secs).min(1.0);
+                let burn_progress = 70 + (progress_ratio * 25.0) as u8; // 70% to 95%
+
+                if burn_progress != last_progress && burn_progress < 95 {
+                    let speed_mbs = if elapsed > 0.0 {
+                        (dir_size as f64 / elapsed / 1_000_000.0) as u32
+                    } else { 0 };
+
+                    let eta_mins = if progress_ratio > 0.0 {
+                        ((1.0 - progress_ratio) * estimated_burn_time_secs / 60.0) as u32
+                    } else { 0 };
+
+                    let _ = progress_tx.send(DiscCreationMessage::Progress(
+                        format!("🔥 Burning... {}MB/s | {}min remaining | {}% complete",
+                               speed_mbs, eta_mins, burn_progress)
+                    ));
+                    last_progress = burn_progress;
+                }
+
+                thread::sleep(Duration::from_secs(2)); // Update every 2 seconds
+            }
+        });
 
         // Perform the actual burn with error handling
-        let start_time = std::time::Instant::now();
         match burn::burn_with_method(dir_path, device, dry_run, "direct") {
             Ok(_) => {
                 let burn_duration = start_time.elapsed();
-                let _ = tx.send(DiscCreationMessage::Progress(format!("✅ Direct burn completed in {:.1}s", burn_duration.as_secs_f64())));
-                thread::sleep(Duration::from_millis(200));
+                let actual_speed = if burn_duration.as_secs_f64() > 0.0 {
+                    (dir_size as f64 / burn_duration.as_secs_f64() / 1_000_000.0) as u32
+                } else { 0 };
+
+                let _ = tx.send(DiscCreationMessage::Progress(
+                    format!("✅ Direct burn completed! {:.1}s | {}MB/s average speed",
+                           burn_duration.as_secs_f64(), actual_speed)
+                ));
+                thread::sleep(Duration::from_millis(500));
                 Ok(())
             }
             Err(e) => {

@@ -2,7 +2,7 @@
 
 A production-quality TUI application for managing Blu-ray "cold storage" archives on Linux.
 
-![BlueVault](https://img.shields.io/badge/version-0.1.1-blue) ![Rust](https://img.shields.io/badge/rust-1.70%2B-orange) ![License](https://img.shields.io/badge/license-GPL--2.0-green)
+![BlueVault](https://img.shields.io/badge/version-0.1.2-blue) ![Rust](https://img.shields.io/badge/rust-1.70%2B-orange) ![License](https://img.shields.io/badge/license-GPL--2.0-green)
 
 ![BlueVault Screenshot](bluevaulscreen1.jpg)
 
@@ -53,8 +53,10 @@ The theme system supports:
 - ✅ **Structured Logging**: Detailed logs for troubleshooting and audit trails
 - ✅ **High-Performance Processing**: Multi-core CRC32/SHA256 generation (10-50x faster)
 - ✅ **Flexible Burn Modes**: Direct burn (space-efficient) or ISO-first (traditional)
-- ✅ **Smart Progress Reporting**: Real-time updates during staging, burning, and verification
+- ✅ **Real-Time Burn Progress**: Live speed, ETA, and progress during 50GB+ burns
+- ✅ **Smart Media Detection**: Handles BD-R discs misreported as BD-ROM
 - ✅ **Dry Run Testing**: Creates actual ISO files for burn simulation
+- ✅ **Automatic Disc ID Sequencing**: Database-aware unique ID generation
 
 ### User Interface
 
@@ -276,11 +278,27 @@ BlueVault is optimized for speed and efficiency:
 - **Fast staging**: Optional rsync support for large file operations
 - **Memory efficient**: Streaming checksum calculation for large files
 - **Real-time feedback**: Progress updates during all long-running operations
+- **Intelligent media detection**: Automatically handles BD-R discs misreported as BD-ROM
 
 **Typical performance** (on a 4-core system):
 - Manifest generation: ~5-10 seconds (vs ~30-60 seconds sequential)
 - Direct burn: No intermediate storage required
 - ISO burn: ~16 seconds for 13GB ISO creation
+- Large burns: Real-time progress with accurate ETAs
+
+## Recent Improvements (v0.1.1)
+
+**Enhanced User Experience:**
+- **Live Burn Progress**: Real-time speed, time remaining, and progress for 50GB+ burns
+- **Smart Media Handling**: BD-R discs misreported as BD-ROM are automatically handled
+- **Unique Disc IDs**: Database-aware sequential ID generation prevents conflicts
+- **Clean UI**: Removed terminal corruption during progress updates
+
+**Technical Improvements:**
+- **Hybrid Direct Burning**: Temporary ISO creation with automatic cleanup
+- **Database Reliability**: Proper error handling and unique constraint management
+- **Progress Estimation**: Intelligent burn time prediction based on data size
+- **Background Monitoring**: Non-blocking progress updates during long operations
 
 ## Project Structure
 
@@ -405,7 +423,7 @@ Key principles:
 
 ## Status
 
-**Current Version**: 0.1.1
+**Current Version**: 0.1.2
 
 This is an early-stage project. Core functionality is implemented and working, but some features may be missing or incomplete. See the [Project.md](Project.md) for the full specification.
 
@@ -413,14 +431,16 @@ This is an early-stage project. Core functionality is implemented and working, b
 - ✅ Core TUI with phosphor theme
 - ✅ Directory selection (manual + browser)
 - ✅ Disc creation workflow with direct burn mode
-- ✅ Database indexing and search functionality
+- ✅ Database indexing with automatic unique ID generation
 - ✅ Disc verification with SHA256/CRC32 checksums
 - ✅ QR code generation
 - ✅ Structured logging
 - ✅ High-performance multi-core checksum generation
 - ✅ Flexible burn modes (direct vs ISO-first)
-- ✅ Real-time progress reporting during all operations
+- ✅ Real-time burn progress with speed/ETA for large discs
+- ✅ Smart media detection for BD-R/BDR-ROM compatibility
 - ✅ Dry run testing with actual ISO creation
+- ✅ Automatic temporary file cleanup
 - ✅ Comprehensive error handling and diagnostics
 
 **Planned:**

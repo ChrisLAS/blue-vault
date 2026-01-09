@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::debug;
+use rusqlite::params;
 
 /// Generate a disc ID in the format YYYY-BD-###.
 pub fn generate_disc_id() -> String {
@@ -26,10 +27,38 @@ fn get_current_year() -> u32 {
 
 /// Get next disc number for a year (checks database if available).
 /// For now, just return None to always start from 001.
-fn get_next_disc_number(_year: &u32) -> Option<u32> {
-    // TODO: Query database for existing discs with this year prefix
-    // For now, always start from 1
-    None
+fn get_next_disc_number(year: &u32) -> Option<u32> {
+    // Query database for existing discs with this year prefix
+    let db_path = dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("bdarchive")
+        .join("archive.db");
+
+    if !db_path.exists() {
+        // Database doesn't exist yet, start from 1
+        return Some(1);
+    }
+
+    let conn = match rusqlite::Connection::open(&db_path) {
+        Ok(conn) => conn,
+        Err(_) => return Some(1), // If we can't open DB, start from 1
+    };
+
+    let year_prefix = format!("{:04}-BD-", year);
+    let query = "SELECT disc_id FROM discs WHERE disc_id LIKE ?1 ORDER BY disc_id DESC LIMIT 1";
+
+    match conn.query_row(query, params![format!("{}%", year_prefix)], |row| {
+        let disc_id: String = row.get(0)?;
+        // Extract the number from disc_id like "2026-BD-005"
+        if let Some(num_str) = disc_id.strip_prefix(&year_prefix) {
+            Ok(num_str.parse::<u32>().ok())
+        } else {
+            Ok(None)
+        }
+    }) {
+        Ok(Some(last_num)) => Some(last_num + 1),
+        _ => Some(1), // No existing discs for this year, start from 1
+    }
 }
 
 /// Generate volume label from disc ID.

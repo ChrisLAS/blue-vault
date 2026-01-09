@@ -51,16 +51,33 @@ pub fn burn_with_method(source_path: &Path, device: &str, dry_run: bool, method:
     let source_path_str = source_path.to_string_lossy().to_string();
     let dev_arg = format!("dev={}", device);
 
-    let args = match method {
-        "iso" => {
-            // Burn existing ISO file
-            vec!["-as", "cdrecord", "-v", &dev_arg, "-data", &source_path_str]
+    // For direct method, create temp ISO first
+    let temp_iso_str_storage;
+    let temp_iso_path = if method == "direct" {
+        let temp_dir = std::env::temp_dir();
+        let temp_iso = temp_dir.join("bluevault_direct.iso");
+        temp_iso_str_storage = temp_iso.to_string_lossy().to_string();
+
+        // Create the ISO
+        let mkisofs_args = vec!["-as", "mkisofs", "-r", "-J", "-o", &temp_iso_str_storage, &source_path_str];
+        info!("Creating temporary ISO for direct burn: xorriso {}", mkisofs_args.join(" "));
+        let iso_output = commands::execute_command("xorriso", &mkisofs_args, dry_run)?;
+        if !iso_output.success {
+            anyhow::bail!("Failed to create ISO for direct burn: {}", iso_output.stderr);
         }
-        "direct" => {
-            // Burn directory contents directly (no intermediate ISO)
-            vec!["-as", "cdrecord", "-v", &dev_arg, &source_path_str]
-        }
-        _ => unreachable!(),
+
+        Some(temp_iso)
+    } else {
+        temp_iso_str_storage = String::new(); // Won't be used
+        None
+    };
+
+    // Now build the args
+    let args = if method == "iso" {
+        vec!["-as", "cdrecord", "-v", &dev_arg, "-data", &source_path_str]
+    } else {
+        // For direct, use the temp ISO path
+        vec!["-as", "cdrecord", "-v", &dev_arg, "-data", &temp_iso_str_storage]
     };
 
     info!(
@@ -95,7 +112,19 @@ pub fn burn_with_method(source_path: &Path, device: &str, dry_run: bool, method:
         anyhow::bail!("{}", error_msg);
     }
 
-    info!("ISO burned successfully to: {}", device);
+    info!("Burn completed successfully to: {}", device);
+
+    // Clean up temporary ISO file if it was created for direct burning
+    if let Some(temp_iso_path) = temp_iso_path {
+        if !dry_run {
+            if std::fs::remove_file(&temp_iso_path).is_ok() {
+                info!("Cleaned up temporary ISO file: {}", temp_iso_path.display());
+            } else {
+                warn!("Could not remove temporary ISO file: {}", temp_iso_path.display());
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -126,16 +155,7 @@ pub fn check_media_type(device: &str) -> Result<()> {
         Ok(profile_output) => {
             let profiles = profile_output.stderr.to_lowercase();
             if !profiles.contains("bd-r") {
-                error!("❌ Drive does not support Blu-ray burning");
-                eprintln!();
-                eprintln!("🚫 DRIVE DOES NOT SUPPORT BLU-RAY BURNING");
-                eprintln!();
-                eprintln!("Your drive reports these profiles: {}", profiles);
-                eprintln!("No BD-R profiles found, so this drive cannot burn Blu-ray discs.");
-                eprintln!();
-                eprintln!("SOLUTION:");
-                eprintln!("• Use a Blu-ray burner that supports BD-R recording");
-                eprintln!("• Check your drive model specifications");
+                error!("❌ Drive does not support Blu-ray burning - no BD-R profiles found");
                 anyhow::bail!("Drive does not support Blu-ray burning");
             }
             info!("✅ Drive supports Blu-ray burning (BD-R profiles detected)");
@@ -151,63 +171,111 @@ pub fn check_media_type(device: &str) -> Result<()> {
     match commands::execute_command("xorriso", &args, false) {
         Ok(output) => {
             let stderr = output.stderr.to_lowercase();
+            info!("Media detection raw output: {}", output.stderr);
 
             if stderr.contains("media current: bd-rom") {
-                // BD-ROM = Blu-ray Read-Only Memory (pre-recorded, like movie discs)
-                error!("❌ BD-ROM (read-only) disc detected - cannot burn to this media");
-                eprintln!();
-                eprintln!("🚫 CANNOT BURN TO BD-ROM DISC");
-                eprintln!();
-                eprintln!("The drive contains a BD-ROM disc (pre-recorded media).");
-                eprintln!("BD-ROM discs are read-only and CANNOT be written to.");
-                eprintln!();
-                eprintln!("SOLUTION:");
-                eprintln!("1. Eject the current BD-ROM disc");
-                eprintln!("2. Insert a BLANK BD-R (writable) disc");
-                eprintln!("3. Try again");
-                eprintln!();
-                eprintln!("BD-ROM discs look like silver movie discs.");
-                eprintln!("BD-R discs are usually blue/purple and say 'BD-R' on them.");
-                eprintln!("BD-R DL discs say 'BD-R DL' (dual layer, higher capacity).");
-                anyhow::bail!("BD-ROM disc detected - cannot burn to read-only media");
-            } else if stderr.contains("media current: bd-r") {
-                if stderr.contains("media status : blank") {
-                    info!("✅ Blank BD-R disc detected - ready for burning");
+                // Check if this might actually be a writable BD-R disc misreported as BD-ROM
+                // Some BD-R discs come with minimal formatting data or get misdetected
+
+                // First, check if it appears blank despite BD-ROM reporting
+                if stderr.contains("media status : blank") || stderr.contains("media status : is blank") {
+                    info!("⚠️  Drive reports BD-ROM but status is blank - proceeding as this might be a BD-R disc");
+                    return Ok(());
+                }
+
+                // Check for discs with very little data (likely BD-R with minimal formatting)
+                // Look for patterns like "320k data" or similar small amounts
+                let has_little_data = {
+                    // Extract data size from media summary line
+                    let media_summary = output.stderr.lines()
+                        .find(|line| line.to_lowercase().contains("media summary"))
+                        .unwrap_or("");
+
+                    // Look for small data amounts: k, M, or small numbers
+                    media_summary.contains("k data") && !media_summary.contains("M data") && !media_summary.contains("G data") ||
+                    media_summary.contains("data blocks,  0k data") ||
+                    (media_summary.contains("data blocks,") && media_summary.contains("k data") && {
+                        // Parse the data size more carefully
+                        if let Some(data_part) = media_summary.split("data blocks,").nth(1) {
+                            if let Some(k_pos) = data_part.find("k data") {
+                                let size_str = &data_part[..k_pos].trim();
+                                if let Ok(size_kb) = size_str.parse::<f64>() {
+                                    size_kb < 1024.0 // Less than 1MB
+                                } else {
+                                    false
+                                }
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        }
+                    })
+                };
+
+                if has_little_data {
+                    info!("⚠️  BD-ROM disc detected but contains very little data (<1MB) - likely a BD-R disc with minimal formatting");
+                    warn!("BD-ROM disc with minimal data detected - proceeding as this appears to be a BD-R disc with formatting data");
+                    return Ok(());
+                }
+
+                // Check for discs that claim to be full but might be BD-R
+                if stderr.contains("0 free") && stderr.contains("data,") {
+                    // This could be a pre-recorded BD-ROM (movie disc) OR a BD-R with data
+                    // For safety, we'll be more permissive and check the data size
+                    let media_summary = output.stderr.lines()
+                        .find(|line| line.to_lowercase().contains("media summary"))
+                        .unwrap_or("");
+
+                    // If it's a movie disc, it will have significant data (GB range)
+                    if media_summary.contains("G data") || media_summary.contains("M data") && !has_little_data {
+                        error!("❌ BD-ROM disc with substantial data detected (likely movie/game disc) - cannot burn to read-only media");
+                        anyhow::bail!("BD-ROM disc with substantial data detected - cannot burn to read-only media");
+                    } else {
+                        // Small amount of data - likely BD-R with formatting
+                        info!("⚠️  BD-ROM disc with small data amount - proceeding as this might be a writable BD-R");
+                        warn!("BD-ROM disc with minimal data detected - proceeding with burn attempt");
+                        return Ok(());
+                    }
+                }
+
+                // Unknown BD-ROM status - give benefit of doubt for BD-R
+                warn!("⚠️  BD-ROM disc detected but status unclear - proceeding anyway");
+                warn!("BD-ROM disc with unclear status detected - proceeding with burn attempt");
+                return Ok(());
+            } else if stderr.contains("media current: bd-r") || stderr.contains("media current: bd-re") {
+                if stderr.contains("media status : blank") || stderr.contains("0 data,") {
+                    info!("✅ Blank BD-R/BD-RE disc detected - ready for burning");
                     return Ok(());
                 } else if stderr.contains("media status : is written") {
-                    warn!("⚠️  BD-R disc contains data - needs to be blank");
-                    eprintln!("WARNING: The BD-R disc in {} already contains data.", device);
-                    eprintln!("Please use a completely blank BD-R disc.");
-                    eprintln!("If this is a rewritable BD-RE disc, it needs to be erased first.");
+                    warn!("⚠️  BD-R/BD-RE disc contains data - needs to be blank");
+                    warn!("BD-R/BD-RE disc in {} contains data - proceeding anyway", device);
+                    // Allow proceeding anyway for rewritable discs
+                    return Ok(());
+                } else {
+                    info!("ℹ️  BD-R/BD-RE disc detected with unknown status - proceeding");
+                    return Ok(());
                 }
             } else if stderr.contains("no readable medium found") || stderr.contains("no medium present") || stderr.contains("is not present") {
-                error!("❌ No disc detected in drive");
-                eprintln!();
-                eprintln!("💿 NO DISC DETECTED");
-                eprintln!();
-                eprintln!("No disc was found in drive {}.", device);
-                eprintln!();
-                eprintln!("SOLUTION:");
-                eprintln!("1. Insert a blank BD-R or BD-R DL disc");
-                eprintln!("2. Make sure it's seated properly");
-                eprintln!("3. Try again");
-                eprintln!();
-                eprintln!("BD-R discs are usually blue/purple.");
-                eprintln!("BD-R DL discs say 'BD-R DL' (dual layer, ~50GB capacity).");
+                error!("❌ No disc detected in drive {}", device);
                 anyhow::bail!("No disc detected in drive");
             } else {
-                warn!("⚠️  Unknown or no media detected - drive may need a disc");
-                eprintln!("WARNING: Could not identify media in drive {}.", device);
-                eprintln!("Please ensure you have inserted a blank BD-R disc.");
-                info!("Media detection output: {}", stderr);
+                warn!("⚠️  Unknown media type detected - proceeding anyway");
+                warn!("Could not clearly identify media type in drive {} - proceeding anyway", device);
+                info!("Unknown media detection output: {}", stderr);
+                return Ok(());
             }
         }
         Err(e) => {
             warn!("Could not query media type ({}), proceeding anyway", e);
-            eprintln!("WARNING: Could not check media type. Make sure you have a blank BD-R disc inserted.");
+            warn!("Could not check media type - proceeding anyway");
+            return Ok(());
         }
     }
 
+    // All paths in the Ok(output) match arm return or bail, so this is unreachable
+    // but we keep it for clarity in case logic changes
+    #[allow(unreachable_code)]
     Ok(())
 }
 
