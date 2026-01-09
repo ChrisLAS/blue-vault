@@ -55,6 +55,8 @@ The theme system supports:
 - ✅ **Flexible Burn Modes**: Direct burn (space-efficient) or ISO-first (traditional)
 - ✅ **Real-Time Burn Progress**: Live speed, ETA, and progress during 50GB+ burns
 - ✅ **Smart Media Detection**: Handles BD-R discs misreported as BD-ROM
+- ✅ **Automatic Cleanup**: Staging files removed after successful/failed burns
+- ✅ **Universal Quit Key**: 'Q' quits from any screen, 'Esc' navigates back
 - ✅ **Dry Run Testing**: Creates actual ISO files for burn simulation
 - ✅ **Automatic Disc ID Sequencing**: Database-aware unique ID generation
 
@@ -66,6 +68,7 @@ The theme system supports:
 - ✅ **Verify Disc Flow**: Interactive disc verification with mount/unmount
 - ✅ **Settings Screen**: View and manage configuration
 - ✅ **Log Viewer**: Browse application logs
+- ✅ **Universal Quit**: 'Q' quits from any screen, 'Esc' navigates back
 
 ### Safety & Robustness
 
@@ -233,7 +236,7 @@ On first run, BlueVault will:
 
 1. **Navigate the menu** with `↑/↓` or `j/k`
 2. **Select options** with `Enter`
-3. **Go back** with `Esc` or `q`
+3. **Go back** with `Esc`, **Quit anytime** with `Q`
 4. **Tab** between input fields (in directory selector)
 
 #### Creating a New Disc
@@ -337,6 +340,7 @@ BlueVault is optimized for speed and efficiency:
 - **Memory efficient**: Streaming checksum calculation for large files
 - **Real-time feedback**: Progress updates during all long-running operations
 - **Intelligent media detection**: Automatically handles BD-R discs misreported as BD-ROM
+- **Automatic cleanup**: Staging directories removed after burns to save disk space
 
 **Typical performance** (on a 4-core system):
 - Manifest generation: ~5-10 seconds (vs ~30-60 seconds sequential)
@@ -344,11 +348,13 @@ BlueVault is optimized for speed and efficiency:
 - ISO burn: ~16 seconds for 13GB ISO creation
 - Large burns: Real-time progress with accurate ETAs
 
-## Recent Improvements (v0.1.1)
+## Recent Improvements (v0.1.2)
 
 **Enhanced User Experience:**
 - **Live Burn Progress**: Real-time speed, time remaining, and progress for 50GB+ burns
 - **Smart Media Handling**: BD-R discs misreported as BD-ROM are automatically handled
+- **Universal Quit Key**: 'Q' quits from any screen, 'Esc' navigates back
+- **Automatic Cleanup**: Staging files removed after successful/failed burns
 - **Unique Disc IDs**: Database-aware sequential ID generation prevents conflicts
 - **Clean UI**: Removed terminal corruption during progress updates
 
@@ -357,6 +363,8 @@ BlueVault is optimized for speed and efficiency:
 - **Database Reliability**: Proper error handling and unique constraint management
 - **Progress Estimation**: Intelligent burn time prediction based on data size
 - **Background Monitoring**: Non-blocking progress updates during long operations
+- **Cross-Platform Distribution**: Docker, build scripts, and CI/CD support
+- **Enhanced Nix Flake**: Complete development environment with all tools
 
 ## Project Structure
 
@@ -509,7 +517,7 @@ REM Extract and move bdarchive.exe to a directory in your PATH
 
 ## Status
 
-**Current Version**: 0.1.2
+**Current Version**: 0.1.2 (Latest)
 
 This is an early-stage project. Core functionality is implemented and working, but some features may be missing or incomplete. See the [Project.md](Project.md) for the full specification.
 
