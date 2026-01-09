@@ -9,9 +9,9 @@ impl GridLayout {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(3),  // Header
-                Constraint::Min(10),    // Content
-                Constraint::Length(2),  // Footer
+                Constraint::Length(3), // Header
+                Constraint::Min(10),   // Content
+                Constraint::Length(2), // Footer
             ])
             .split(area);
 
@@ -22,21 +22,14 @@ impl GridLayout {
     pub fn two_column(area: Rect, left_width: u16) -> (Rect, Rect) {
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Length(left_width),
-                Constraint::Min(10),
-            ])
+            .constraints([Constraint::Length(left_width), Constraint::Min(10)])
             .split(area);
 
         (chunks[0], chunks[1])
     }
 
     /// Create a three-column layout (left, center, right)
-    pub fn three_column(
-        area: Rect,
-        left_width: u16,
-        right_width: u16,
-    ) -> (Rect, Rect, Rect) {
+    pub fn three_column(area: Rect, left_width: u16, right_width: u16) -> (Rect, Rect, Rect) {
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
@@ -80,10 +73,7 @@ impl GridLayout {
     }
 
     /// Split content area into fixed sections
-    pub fn split_content(
-        area: Rect,
-        sections: &[Constraint],
-    ) -> std::rc::Rc<[Rect]> {
+    pub fn split_content(area: Rect, sections: &[Constraint]) -> std::rc::Rc<[Rect]> {
         Layout::default()
             .direction(Direction::Vertical)
             .constraints(sections)
@@ -112,4 +102,3 @@ pub mod borders {
         symbols::border::PLAIN
     }
 }
-

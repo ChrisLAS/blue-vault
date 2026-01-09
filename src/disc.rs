@@ -65,28 +65,32 @@ pub fn write_disc_info(
     tool_version: &str,
 ) -> Result<()> {
     let disc_info_path = disc_root.join("DISC_INFO.txt");
-    
+
     let volume_label = generate_volume_label(disc_id);
     let created_at = format_timestamp_now();
-    
+
     let mut info = String::new();
     info.push_str(&format!("Disc-ID: {}\n", disc_id));
     info.push_str(&format!("Created: {}\n", created_at));
     info.push_str(&format!("Volume Label: {}\n", volume_label));
-    
+
     if let Some(notes_str) = notes {
         info.push_str(&format!("Notes: {}\n", notes_str));
     }
-    
+
     info.push_str("\nSource Roots:\n");
     for root in source_roots {
         info.push_str(&format!("  {}\n", root.display()));
     }
-    
+
     info.push_str(&format!("\nTool Version: {}\n", tool_version));
 
-    fs::write(&disc_info_path, info)
-        .with_context(|| format!("Failed to write DISC_INFO.txt: {}", disc_info_path.display()))?;
+    fs::write(&disc_info_path, info).with_context(|| {
+        format!(
+            "Failed to write DISC_INFO.txt: {}",
+            disc_info_path.display()
+        )
+    })?;
 
     debug!("Wrote DISC_INFO.txt: {}", disc_info_path.display());
     Ok(())
@@ -108,17 +112,20 @@ pub fn format_timestamp_now() -> String {
 fn format_timestamp_simple(secs: u64) -> String {
     let days = secs / 86400;
     let secs_in_day = secs % 86400;
-    
+
     let year = 1970 + (days / 365);
     let day_of_year = days % 365;
     let month = 1 + (day_of_year / 30);
     let day = 1 + (day_of_year % 30);
-    
+
     let hours = secs_in_day / 3600;
     let mins = (secs_in_day % 3600) / 60;
     let secs_remainder = secs_in_day % 60;
-    
-    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", year, month, day, hours, mins, secs_remainder)
+
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        year, month, day, hours, mins, secs_remainder
+    )
 }
 
 /// Get disc version string.
@@ -148,13 +155,13 @@ mod tests {
     fn test_create_disc_layout() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let staging = temp_dir.path();
-        
+
         let source_folders = vec![PathBuf::from("/tmp/test1")];
         let disc_root = create_disc_layout(staging, "2024-BD-001", &source_folders, None)?;
-        
+
         assert!(disc_root.exists());
         assert!(disc_root.join("ARCHIVE").exists());
-        
+
         Ok(())
     }
 
@@ -162,19 +169,24 @@ mod tests {
     fn test_write_disc_info() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let disc_root = temp_dir.path();
-        
+
         let source_roots = vec![PathBuf::from("/tmp/test1"), PathBuf::from("/tmp/test2")];
-        write_disc_info(disc_root, "2024-BD-001", Some("Test disc"), &source_roots, "1.0.0")?;
-        
+        write_disc_info(
+            disc_root,
+            "2024-BD-001",
+            Some("Test disc"),
+            &source_roots,
+            "1.0.0",
+        )?;
+
         let info_path = disc_root.join("DISC_INFO.txt");
         assert!(info_path.exists());
-        
+
         let content = fs::read_to_string(&info_path)?;
         assert!(content.contains("Disc-ID: 2024-BD-001"));
         assert!(content.contains("Test disc"));
         assert!(content.contains("/tmp/test1"));
-        
+
         Ok(())
     }
 }
-

@@ -20,7 +20,11 @@ pub fn execute_command<S: AsRef<OsStr>>(
     debug!("Executing command: {} {}", program_str, args_str.join(" "));
 
     if dry_run {
-        println!("[DRY RUN] Would execute: {} {}", program_str, args_str.join(" "));
+        debug!(
+            "[DRY RUN] Would execute: {} {}",
+            program_str,
+            args_str.join(" ")
+        );
         return Ok(CommandOutput {
             success: true,
             stdout: String::new(),
@@ -45,7 +49,9 @@ pub fn execute_command<S: AsRef<OsStr>>(
     if !success {
         warn!(
             "Command failed: {} {} (exit code: {:?})",
-            program_str, args_str.join(" "), exit_code
+            program_str,
+            args_str.join(" "),
+            exit_code
         );
         warn!("stderr: {}", stderr);
     } else {
@@ -102,7 +108,7 @@ pub fn execute_command_with_stdin<S: AsRef<OsStr>>(
     );
 
     if dry_run {
-        println!(
+        debug!(
             "[DRY RUN] Would execute: {} {} (with {} bytes of stdin)",
             program_str,
             args_str.join(" "),
@@ -144,7 +150,9 @@ pub fn execute_command_with_stdin<S: AsRef<OsStr>>(
     if !success {
         warn!(
             "Command failed: {} {} (exit code: {:?})",
-            program_str, args_str.join(" "), exit_code
+            program_str,
+            args_str.join(" "),
+            exit_code
         );
         warn!("stderr: {}", stderr);
     }
@@ -224,4 +232,3 @@ mod tests {
         assert_eq!(output.exit_code, Some(1));
     }
 }
-

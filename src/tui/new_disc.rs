@@ -1,10 +1,10 @@
-use ratatui::{
-    prelude::*,
-    widgets::{Block, Borders, Paragraph, Gauge},
-};
-use std::path::PathBuf;
 use crate::theme::Theme;
 use crate::tui::directory_selector;
+use ratatui::{
+    prelude::*,
+    widgets::{Block, Borders, Gauge, Paragraph},
+};
+use std::path::PathBuf;
 
 #[derive(Debug)]
 pub struct NewDiscFlow {
@@ -18,6 +18,10 @@ pub struct NewDiscFlow {
     processing_state: ProcessingState,
     /// Directory selector for folder selection step
     directory_selector: Option<directory_selector::DirectorySelector>,
+    /// Whether to do a dry run (no actual burning)
+    dry_run: bool,
+    /// Current file being processed (for progress display)
+    file_progress: String,
 }
 
 #[derive(Debug)]
@@ -54,6 +58,8 @@ impl Default for NewDiscFlow {
             error_message: None,
             processing_state: ProcessingState::Idle,
             directory_selector: None,
+            dry_run: false,
+            file_progress: String::new(),
         }
     }
 }
@@ -70,9 +76,11 @@ impl NewDiscFlow {
             error_message: None,
             processing_state: ProcessingState::Idle,
             directory_selector: None,
+            dry_run: false,
+            file_progress: String::new(),
         }
     }
-    
+
     /// Initialize directory selector (call when entering SelectFolders step)
     pub fn init_directory_selector(&mut self) -> anyhow::Result<()> {
         if self.directory_selector.is_none() {
@@ -80,7 +88,7 @@ impl NewDiscFlow {
         }
         Ok(())
     }
-    
+
     /// Get directory selector (mutable)
     pub fn directory_selector_mut(&mut self) -> Option<&mut directory_selector::DirectorySelector> {
         self.directory_selector.as_mut()
@@ -188,6 +196,22 @@ impl NewDiscFlow {
         &self.processing_state
     }
 
+    pub fn dry_run(&self) -> bool {
+        self.dry_run
+    }
+
+    pub fn set_dry_run(&mut self, dry_run: bool) {
+        self.dry_run = dry_run;
+    }
+
+    pub fn file_progress(&self) -> &str {
+        &self.file_progress
+    }
+
+    pub fn set_file_progress(&mut self, progress: String) {
+        self.file_progress = progress;
+    }
+
     pub fn set_status(&mut self, message: String) {
         self.status_message = message;
     }
@@ -206,29 +230,40 @@ impl NewDiscFlow {
     pub fn render(&mut self, theme: &Theme, frame: &mut Frame, area: Rect) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Min(5),
-                Constraint::Length(3),
-            ])
+            .constraints([Constraint::Min(5), Constraint::Length(3)])
             .split(area);
 
         let block = Block::default()
             .title("New Disc")
             .borders(Borders::ALL)
             .border_style(theme.border_style());
-        
+
         match self.current_step {
             NewDiscStep::EnterDiscId => {
-                let display_id = if self.input_buffer.is_empty() { &self.disc_id } else { &self.input_buffer };
-                let text = format!("Disc ID: {}\n\nType to edit, [Enter] Continue, [Esc] Cancel", display_id);
+                let display_id = if self.input_buffer.is_empty() {
+                    &self.disc_id
+                } else {
+                    &self.input_buffer
+                };
+                let text = format!(
+                    "Disc ID: {}\n\nType to edit, [Enter] Continue, [Esc] Cancel",
+                    display_id
+                );
                 let para = Paragraph::new(text)
                     .block(block)
                     .style(theme.primary_style());
                 frame.render_widget(para, chunks[0]);
             }
             NewDiscStep::EnterNotes => {
-                let display_notes = if self.input_buffer.is_empty() { &self.notes } else { &self.input_buffer };
-                let text = format!("Notes: {}\n\nType to edit, [Enter] Continue, [Esc] Back", display_notes);
+                let display_notes = if self.input_buffer.is_empty() {
+                    &self.notes
+                } else {
+                    &self.input_buffer
+                };
+                let text = format!(
+                    "Notes: {}\n\nType to edit, [Enter] Continue, [Esc] Back",
+                    display_notes
+                );
                 let para = Paragraph::new(text)
                     .block(block)
                     .style(theme.primary_style());
@@ -239,17 +274,17 @@ impl NewDiscFlow {
                 if self.directory_selector.is_none() {
                     let _ = self.init_directory_selector();
                 }
-                
+
                 // Split into three sections: selected folders, directory selector, instructions
                 let chunks = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([
-                        Constraint::Length(8),  // Selected folders list
-                        Constraint::Min(15),    // Directory selector
-                        Constraint::Length(2),  // Instructions
+                        Constraint::Length(8), // Selected folders list
+                        Constraint::Min(15),   // Directory selector
+                        Constraint::Length(2), // Instructions
                     ])
                     .split(chunks[0]);
-                
+
                 // Show selected folders at top
                 let folders_text = if self.source_folders.is_empty() {
                     "No folders selected".to_string()
@@ -261,17 +296,17 @@ impl NewDiscFlow {
                         .collect::<Vec<_>>()
                         .join("\n")
                 };
-                
+
                 let selected_block = Block::default()
                     .title(format!("Selected Folders ({})", self.source_folders.len()))
                     .borders(Borders::ALL)
                     .border_style(theme.border_style());
-                
+
                 let para = Paragraph::new(folders_text)
                     .block(selected_block)
                     .style(theme.primary_style());
                 frame.render_widget(para, chunks[0]);
-                
+
                 // Render directory selector (always visible)
                 if let Some(ref mut selector) = self.directory_selector {
                     // Render returns true if entries were just loaded (triggers redraw)
@@ -282,37 +317,44 @@ impl NewDiscFlow {
                     }
                 } else {
                     // Fallback if selector initialization failed - show message
-                    let text = "Directory selector initialization failed.\nPress any key to continue...";
+                    let text =
+                        "Directory selector initialization failed.\nPress any key to continue...";
                     let para = Paragraph::new(text)
                         .block(
                             Block::default()
                                 .title("Directory Selector")
                                 .borders(Borders::ALL)
-                                .border_style(theme.error_style())
+                                .border_style(theme.error_style()),
                         )
                         .style(theme.error_style());
                     frame.render_widget(para, chunks[1]);
                 }
-                
+
                 // Instructions
                 let instructions = format!(
                     "[Tab] Switch focus  [Enter] Select/Add  [↑↓] Navigate  [Del] Remove  [Esc] Back"
                 );
-                let inst_para = Paragraph::new(instructions)
-                    .style(theme.secondary_style());
+                let inst_para = Paragraph::new(instructions).style(theme.secondary_style());
                 frame.render_widget(inst_para, chunks[2]);
             }
             NewDiscStep::Review => {
-                let folders_list = self.source_folders
+                let folders_list = self
+                    .source_folders
                     .iter()
                     .map(|f| f.display().to_string())
                     .collect::<Vec<_>>()
                     .join("\n  ");
+                let mode = if self.dry_run {
+                    "DRY RUN (no burning)"
+                } else {
+                    "ACTUAL BURN"
+                };
                 let text = format!(
-                    "Review:\n\nDisc ID: {}\nNotes: {}\n\nSource Folders:\n  {}\n\n[Enter] Start, [Esc] Back",
+                    "Review:\n\nDisc ID: {}\nNotes: {}\n\nSource Folders:\n  {}\n\nMode: {}\n\n[Enter] Start, [D] Toggle Dry Run, [Esc] Back",
                     self.disc_id,
                     if self.notes.is_empty() { "(none)" } else { &self.notes },
-                    if folders_list.is_empty() { "(none)" } else { &folders_list }
+                    if folders_list.is_empty() { "(none)" } else { &folders_list },
+                    mode
                 );
                 let para = Paragraph::new(text)
                     .block(block)
@@ -329,9 +371,11 @@ impl NewDiscFlow {
                     ProcessingState::Indexing => "Updating index...",
                     ProcessingState::GeneratingQR => "Generating QR code...",
                     ProcessingState::Complete => "Complete!",
-                    ProcessingState::Error(msg) => return self.render_error(theme, frame, area, msg),
+                    ProcessingState::Error(msg) => {
+                        return self.render_error(theme, frame, area, msg)
+                    }
                 };
-                
+
                 // Split into main content and activity area
                 let processing_chunks = Layout::default()
                     .direction(Direction::Vertical)
@@ -340,23 +384,45 @@ impl NewDiscFlow {
                         Constraint::Length(6), // Disc activity
                     ])
                     .split(chunks[0]);
-                
-                let text = format!("Status: {}\n\n{}", status, self.status_message);
+
+                let base_text = if self.file_progress.is_empty() {
+                    format!("Status: {}\n\n{}", status, self.status_message)
+                } else {
+                    format!(
+                        "Status: {}\n\n{}\n\n{}",
+                        status, self.status_message, self.file_progress
+                    )
+                };
+
+                let text = if matches!(self.processing_state, ProcessingState::Complete) {
+                    format!("{}\n\n[Esc] Return to Main Menu", base_text)
+                } else if matches!(self.processing_state, ProcessingState::Error(_)) {
+                    format!("{}\n\n[Esc] Go Back", base_text)
+                } else {
+                    base_text
+                };
                 let para = Paragraph::new(text)
                     .block(block)
                     .style(theme.primary_style());
                 frame.render_widget(para, processing_chunks[0]);
 
-                // Disc activity indicator for burning/ISO creation
-                if matches!(&self.processing_state, ProcessingState::CreatingISO | ProcessingState::Burning) {
+                // Disc activity indicator for long operations
+                if matches!(
+                    &self.processing_state,
+                    ProcessingState::GeneratingManifest
+                        | ProcessingState::CreatingISO
+                        | ProcessingState::Burning
+                ) {
                     use crate::ui::disc_activity::{DiscActivity, DiscOperation};
                     let mut disc_activity = DiscActivity::new();
-                    disc_activity.set_operation(if matches!(&self.processing_state, ProcessingState::Burning) {
-                        DiscOperation::Writing
-                    } else {
-                        DiscOperation::Reading
-                    });
-                    
+                    disc_activity.set_operation(
+                        if matches!(&self.processing_state, ProcessingState::Burning) {
+                            DiscOperation::Writing
+                        } else {
+                            DiscOperation::Reading // For manifest generation and ISO creation
+                        },
+                    );
+
                     // Simulate LBA progress
                     let progress = match &self.processing_state {
                         ProcessingState::CreatingISO => 50,
@@ -384,7 +450,7 @@ impl NewDiscFlow {
                             Block::default()
                                 .title("Progress")
                                 .borders(Borders::ALL)
-                                .border_style(theme.border_style())
+                                .border_style(theme.border_style()),
                         )
                         .gauge_style(theme.primary_style())
                         .percent(progress);
@@ -407,7 +473,7 @@ impl NewDiscFlow {
                         Block::default()
                             .title("Overall Progress")
                             .borders(Borders::ALL)
-                            .border_style(theme.border_style())
+                            .border_style(theme.border_style()),
                     )
                     .gauge_style(theme.primary_style())
                     .percent(progress);
@@ -423,10 +489,9 @@ impl NewDiscFlow {
                 Block::default()
                     .title("Error")
                     .borders(Borders::ALL)
-                    .border_style(theme.border_style())
+                    .border_style(theme.border_style()),
             )
             .style(theme.error_style());
         frame.render_widget(para, area);
     }
 }
-

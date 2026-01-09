@@ -1,6 +1,6 @@
 [package]
 name = "bdarchive"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "BlueVault - A TUI application for managing Blu-ray cold storage archives on Linux"
 license = "GPL-2.0-only"
@@ -29,6 +29,8 @@ dirs = "5"
 # Crypto (SHA256)
 sha2 = "0.10"
 hex = "0.4"
+crc32fast = "1.4"  # Fast CRC32 for initial manifest
+rayon = "1.8"      # Parallel processing
 
 # Command execution
 which = "6"

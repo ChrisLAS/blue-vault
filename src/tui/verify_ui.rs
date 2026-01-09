@@ -1,8 +1,8 @@
+use crate::theme::Theme;
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, Paragraph, Gauge},
+    widgets::{Block, Borders, Gauge, Paragraph},
 };
-use crate::theme::Theme;
 
 // Forward declaration for VerificationResult
 // This will be resolved when used via bdarchive::verify::VerificationResult
@@ -144,10 +144,7 @@ impl VerifyUI {
     pub fn render(&self, theme: &Theme, frame: &mut Frame, area: Rect) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Min(5),
-                Constraint::Length(3),
-            ])
+            .constraints([Constraint::Min(5), Constraint::Length(3)])
             .split(area);
 
         let block = Block::default()
@@ -156,8 +153,16 @@ impl VerifyUI {
             .border_style(theme.border_style());
 
         match self.verification_state {
-            VerificationState::Idle | VerificationState::Mounting | VerificationState::Verifying | VerificationState::Recording => {
-                if matches!(self.verification_state, VerificationState::Mounting | VerificationState::Verifying | VerificationState::Recording) {
+            VerificationState::Idle
+            | VerificationState::Mounting
+            | VerificationState::Verifying
+            | VerificationState::Recording => {
+                if matches!(
+                    self.verification_state,
+                    VerificationState::Mounting
+                        | VerificationState::Verifying
+                        | VerificationState::Recording
+                ) {
                     // Processing state
                     let status = match self.verification_state {
                         VerificationState::Mounting => "Mounting disc...",
@@ -165,7 +170,7 @@ impl VerifyUI {
                         VerificationState::Recording => "Recording results...",
                         _ => "",
                     };
-                    
+
                     let text = format!("Status: {}\n\n{}", status, self.status_message);
                     let para = Paragraph::new(text)
                         .block(block.clone())
@@ -183,7 +188,7 @@ impl VerifyUI {
                             Block::default()
                                 .title("Progress")
                                 .borders(Borders::ALL)
-                                .border_style(theme.border_style())
+                                .border_style(theme.border_style()),
                         )
                         .gauge_style(theme.primary_style())
                         .percent(progress);
@@ -198,19 +203,27 @@ impl VerifyUI {
                                 &self.input_buffer
                             }
                         }
-                        _ => &self.device
+                        _ => &self.device,
                     };
-                    
+
                     let mountpoint_display = match self.input_mode {
                         VerifyInputMode::Mountpoint => {
                             if self.input_buffer.is_empty() {
-                                if self.mountpoint.is_empty() { "(auto)" } else { &self.mountpoint }
+                                if self.mountpoint.is_empty() {
+                                    "(auto)"
+                                } else {
+                                    &self.mountpoint
+                                }
                             } else {
                                 &self.input_buffer
                             }
                         }
                         _ => {
-                            if self.mountpoint.is_empty() { "(auto)" } else { &self.mountpoint }
+                            if self.mountpoint.is_empty() {
+                                "(auto)"
+                            } else {
+                                &self.mountpoint
+                            }
                         }
                     };
 
@@ -233,8 +246,10 @@ impl VerifyUI {
             VerificationState::Complete => {
                 if let Some(ref result) = self.verification_result {
                     let status_text = if result.success {
-                        format!("[OK] Verification successful!\n\nFiles checked: {}\nFiles failed: {}", 
-                            result.files_checked, result.files_failed)
+                        format!(
+                            "[OK] Verification successful!\n\nFiles checked: {}\nFiles failed: {}",
+                            result.files_checked, result.files_failed
+                        )
                     } else {
                         format!("[ERR] Verification failed!\n\nFiles checked: {}\nFiles failed: {}\n\nError: {}",
                             result.files_checked, result.files_failed,
@@ -243,10 +258,10 @@ impl VerifyUI {
                     let text = format!("{}\n\n[Esc] Back to menu", status_text);
                     let para = Paragraph::new(text)
                         .block(block.clone())
-                        .style(if result.success { 
-                            theme.success_style() 
-                        } else { 
-                            theme.error_style() 
+                        .style(if result.success {
+                            theme.success_style()
+                        } else {
+                            theme.error_style()
                         });
                     frame.render_widget(para, chunks[0]);
                 } else {
@@ -264,7 +279,7 @@ impl VerifyUI {
                         Block::default()
                             .title("Error")
                             .borders(Borders::ALL)
-                            .border_style(theme.border_style())
+                            .border_style(theme.border_style()),
                     )
                     .style(theme.error_style());
                 frame.render_widget(para, chunks[0]);
@@ -272,4 +287,3 @@ impl VerifyUI {
         }
     }
 }
-

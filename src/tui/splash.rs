@@ -1,10 +1,10 @@
+use crate::theme::Theme;
 use ratatui::{
     prelude::*,
     widgets::{Block, Borders, Paragraph},
 };
-use crate::theme::Theme;
-use std::time::Instant;
 use std::path::PathBuf;
+use std::time::Instant;
 
 /// Startup splash screen
 pub struct SplashScreen {
@@ -60,10 +60,10 @@ impl SplashScreen {
             DbStatus::Error => theme.error_style(),
         };
 
-        let discs_text = if self.db_status == DbStatus::Ok { 
-            self.disc_count.to_string() 
-        } else { 
-            "N/A".to_string() 
+        let discs_text = if self.db_status == DbStatus::Ok {
+            self.disc_count.to_string()
+        } else {
+            "N/A".to_string()
         };
 
         // Build styled text with color for status
@@ -81,15 +81,13 @@ impl SplashScreen {
             Line::from("Press any key to continue..."),
         ]);
 
-        let paragraph = Paragraph::new(splash_text)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(theme.border_style())
-                    .title("Cold Boot")
-            );
+        let paragraph = Paragraph::new(splash_text).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(theme.border_style())
+                .title("Cold Boot"),
+        );
 
         frame.render_widget(paragraph, center_area);
     }
 }
-

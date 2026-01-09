@@ -1,9 +1,9 @@
+use crate::search::{SearchQuery, SearchResult};
+use crate::theme::Theme;
 use ratatui::{
     prelude::*,
     widgets::{Block, Borders, List, ListItem, Paragraph},
 };
-use crate::search::{SearchQuery, SearchResult};
-use crate::theme::Theme;
 
 #[derive(Debug, Clone)]
 pub struct SearchUI {
@@ -80,9 +80,8 @@ impl SearchUI {
 
     pub fn build_search_query(&self) -> SearchQuery {
         // Check if query looks like a SHA256 (64 hex chars)
-        let is_sha256 = self.query.len() == 64 
-            && self.query.chars().all(|c| c.is_ascii_hexdigit());
-        
+        let is_sha256 = self.query.len() == 64 && self.query.chars().all(|c| c.is_ascii_hexdigit());
+
         SearchQuery {
             path_substring: if self.query.is_empty() || is_sha256 {
                 None
@@ -102,10 +101,7 @@ impl SearchUI {
     pub fn render(&self, theme: &Theme, frame: &mut Frame, area: Rect) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(3),
-                Constraint::Min(0),
-            ])
+            .constraints([Constraint::Length(3), Constraint::Min(0)])
             .split(area);
 
         // Search input
@@ -114,7 +110,7 @@ impl SearchUI {
                 Block::default()
                     .title("Search")
                     .borders(Borders::ALL)
-                    .border_style(theme.border_style())
+                    .border_style(theme.border_style()),
             )
             .style(theme.primary_style());
         frame.render_widget(input, chunks[0]);
@@ -126,12 +122,13 @@ impl SearchUI {
                     Block::default()
                         .title("Results")
                         .borders(Borders::ALL)
-                        .border_style(theme.border_style())
+                        .border_style(theme.border_style()),
                 )
                 .style(theme.dim_style());
             frame.render_widget(message, chunks[1]);
         } else {
-            let items: Vec<ListItem> = self.results
+            let items: Vec<ListItem> = self
+                .results
                 .iter()
                 .map(|r| {
                     ListItem::new(format!(
@@ -149,7 +146,7 @@ impl SearchUI {
                     Block::default()
                         .title("Results")
                         .borders(Borders::ALL)
-                        .border_style(theme.border_style())
+                        .border_style(theme.border_style()),
                 )
                 .highlight_style(theme.highlight_style())
                 .highlight_symbol("▶ ");
@@ -163,4 +160,3 @@ impl SearchUI {
         }
     }
 }
-

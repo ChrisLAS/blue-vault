@@ -9,8 +9,7 @@ pub fn check_command(command: &str) -> Option<PathBuf> {
 
 /// Required dependencies for the application.
 pub const REQUIRED_COMMANDS: &[&str] = &[
-    "xorriso",
-    "growisofs",
+    "xorriso", // For ISO creation and burning
     "sha256sum",
     "mount",
     "umount",
@@ -160,4 +159,3 @@ mod tests {
         assert!(check_command("nonexistent_command_xyz123").is_none());
     }
 }
-

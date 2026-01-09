@@ -1,9 +1,9 @@
+use crate::theme::{no_animations, reduced_motion, Theme, ThemeName};
 use ratatui::{
     prelude::*,
     style::Modifier,
     widgets::{Block, Borders, Paragraph},
 };
-use crate::theme::{Theme, ThemeName, reduced_motion, no_animations};
 
 #[derive(Debug, Clone)]
 pub struct Settings {
@@ -22,14 +22,11 @@ impl Settings {
     }
 
     pub fn render(&self, theme: &Theme, frame: &mut Frame, area: Rect) {
-        use ratatui::layout::{Layout, Direction, Constraint};
-        
+        use ratatui::layout::{Constraint, Direction, Layout};
+
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(3),
-                Constraint::Min(0),
-            ])
+            .constraints([Constraint::Length(3), Constraint::Min(0)])
             .split(area);
 
         let title = Paragraph::new("Settings")
@@ -37,7 +34,7 @@ impl Settings {
                 Block::default()
                     .title("Settings")
                     .borders(Borders::ALL)
-                    .border_style(theme.border_style())
+                    .border_style(theme.border_style()),
             )
             .style(theme.primary_style().add_modifier(Modifier::BOLD));
         frame.render_widget(title, chunks[0]);
@@ -48,7 +45,7 @@ impl Settings {
             ThemeName::Amber => "Amber",
             ThemeName::Mono => "Monochrome",
         };
-        
+
         let motion_status = if no_animations() {
             "Disabled"
         } else if reduced_motion() {
@@ -71,10 +68,9 @@ impl Settings {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(theme.border_style())
+                    .border_style(theme.border_style()),
             )
             .style(theme.primary_style());
         frame.render_widget(para, chunks[1]);
     }
 }
-

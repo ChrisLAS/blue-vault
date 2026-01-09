@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use rusqlite::{Connection, params, Transaction};
+use rusqlite::{params, Connection, Transaction};
 use std::path::Path;
 use tracing::{debug, info};
 
@@ -10,8 +10,9 @@ const SCHEMA_VERSION: u32 = 1;
 pub fn init_database(db_path: &Path) -> Result<Connection> {
     // Ensure parent directory exists
     if let Some(parent) = db_path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("Failed to create database directory: {}", parent.display()))?;
+        std::fs::create_dir_all(parent).with_context(|| {
+            format!("Failed to create database directory: {}", parent.display())
+        })?;
     }
 
     let mut conn = Connection::open(db_path)
@@ -32,8 +33,11 @@ fn migrate_database(conn: &mut Connection) -> Result<()> {
     let current_version = get_schema_version(conn)?;
 
     if current_version < SCHEMA_VERSION {
-        info!("Migrating database from version {} to {}", current_version, SCHEMA_VERSION);
-        
+        info!(
+            "Migrating database from version {} to {}",
+            current_version, SCHEMA_VERSION
+        );
+
         let tx = conn.transaction()?;
         if current_version == 0 {
             create_schema(&tx)?;
@@ -44,7 +48,7 @@ fn migrate_database(conn: &mut Connection) -> Result<()> {
         // }
         set_schema_version(&tx, SCHEMA_VERSION)?;
         tx.commit()?;
-        
+
         info!("Database migration completed");
     } else if current_version > SCHEMA_VERSION {
         anyhow::bail!(
@@ -86,7 +90,10 @@ fn set_schema_version(tx: &Transaction, version: u32) -> Result<()> {
         [],
     )?;
     tx.execute("DELETE FROM schema_version", [])?;
-    tx.execute("INSERT INTO schema_version (version) VALUES (?1)", params![version])?;
+    tx.execute(
+        "INSERT INTO schema_version (version) VALUES (?1)",
+        params![version],
+    )?;
     Ok(())
 }
 
@@ -198,7 +205,7 @@ pub struct Disc {
 
 impl Disc {
     /// Insert a new disc record.
-    pub fn insert(conn: &Connection, disc: &Disc) -> Result<()> {
+    pub fn insert(conn: &mut Connection, disc: &Disc) -> Result<()> {
         conn.execute(
             "INSERT INTO discs (
                 disc_id, volume_label, created_at, notes, iso_size, burn_device,
@@ -225,7 +232,7 @@ impl Disc {
         let mut stmt = conn.prepare(
             "SELECT disc_id, volume_label, created_at, notes, iso_size, burn_device,
                     checksum_manifest_hash, qr_path, source_roots, tool_version
-             FROM discs WHERE disc_id = ?1"
+             FROM discs WHERE disc_id = ?1",
         )?;
 
         let disc = stmt.query_row(params![disc_id], |row| {
@@ -255,7 +262,7 @@ impl Disc {
         let mut stmt = conn.prepare(
             "SELECT disc_id, volume_label, created_at, notes, iso_size, burn_device,
                     checksum_manifest_hash, qr_path, source_roots, tool_version
-             FROM discs ORDER BY created_at DESC"
+             FROM discs ORDER BY created_at DESC",
         )?;
 
         let discs = stmt.query_map([], |row| {
@@ -321,7 +328,7 @@ impl FileRecord {
                 "INSERT INTO files (disc_id, rel_path, sha256, size, mtime, added_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)
                  ON CONFLICT(disc_id, rel_path) DO UPDATE SET
-                    sha256 = ?3, size = ?4, mtime = ?5, added_at = ?6"
+                    sha256 = ?3, size = ?4, mtime = ?5, added_at = ?6",
             )?;
 
             for file in files {
@@ -431,4 +438,3 @@ mod tests {
         Ok(())
     }
 }
-

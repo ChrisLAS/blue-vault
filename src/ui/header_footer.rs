@@ -1,10 +1,10 @@
+use crate::theme::Theme;
+use crate::ui::animations::Spinner;
 use ratatui::{
     prelude::*,
     style::Modifier,
     widgets::{Block, Borders, Paragraph},
 };
-use crate::theme::Theme;
-use crate::ui::animations::Spinner;
 
 /// Header widget showing app name, current screen, and hint
 pub struct Header {
@@ -41,7 +41,7 @@ impl Header {
             .block(
                 Block::default()
                     .borders(Borders::BOTTOM)
-                    .border_style(theme.border_style())
+                    .border_style(theme.border_style()),
             );
 
         frame.render_widget(paragraph, area);
@@ -83,7 +83,7 @@ impl Footer {
 
     pub fn set_status(&mut self, status: FooterStatus) {
         self.status = status.clone();
-        
+
         // Show spinner for processing
         match status {
             FooterStatus::Processing(_) => {
@@ -108,21 +108,17 @@ impl Footer {
         let (status_text, status_style) = match &self.status {
             FooterStatus::Ready => (String::new(), theme.secondary_style()),
             FooterStatus::Processing(msg) => {
-                let spinner_text = self.spinner.as_ref()
+                let spinner_text = self
+                    .spinner
+                    .as_ref()
                     .map(|s| format!("{} ", s.current()))
                     .unwrap_or_default();
                 let text = format!("{}{}", spinner_text, msg);
                 (text, theme.primary_style())
             }
-            FooterStatus::Success(msg) => {
-                (msg.clone(), theme.success_style())
-            }
-            FooterStatus::Warning(msg) => {
-                (format!("[WARN] {}", msg), theme.warning_style())
-            }
-            FooterStatus::Error(msg) => {
-                (format!("[ERR] {}", msg), theme.error_style())
-            }
+            FooterStatus::Success(msg) => (msg.clone(), theme.success_style()),
+            FooterStatus::Warning(msg) => (format!("[WARN] {}", msg), theme.warning_style()),
+            FooterStatus::Error(msg) => (format!("[ERR] {}", msg), theme.error_style()),
         };
 
         // Combine hints and status
@@ -134,19 +130,14 @@ impl Footer {
         };
         let footer_text = format!(
             "{}{} │ {}{}  ",
-            left_padding,
-            self.left_hint,
-            status_text,
-            right_hint_part
+            left_padding, self.left_hint, status_text, right_hint_part
         );
 
-        let paragraph = Paragraph::new(footer_text)
-            .style(status_style)
-            .block(
-                Block::default()
-                    .borders(Borders::TOP)
-                    .border_style(theme.border_style())
-            );
+        let paragraph = Paragraph::new(footer_text).style(status_style).block(
+            Block::default()
+                .borders(Borders::TOP)
+                .border_style(theme.border_style()),
+        );
 
         frame.render_widget(paragraph, area);
     }
@@ -157,4 +148,3 @@ impl Default for Footer {
         Self::new()
     }
 }
-

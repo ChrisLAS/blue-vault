@@ -319,9 +319,7 @@ impl Theme {
 
     /// Create highlighted/selected style
     pub fn highlight_style(&self) -> Style {
-        Style::default()
-            .bg(self.accent_bg())
-            .fg(self.accent_fg())
+        Style::default().bg(self.accent_bg()).fg(self.accent_fg())
     }
 
     /// Create border style
@@ -384,4 +382,3 @@ mod tests {
         // Just ensure they don't panic
     }
 }
-

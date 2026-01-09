@@ -2,13 +2,13 @@
 // For now, let's create a working prototype with a placeholder for fpicker
 // that we can replace once we understand the actual API
 
+use crate::theme::Theme;
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, BorderType, Paragraph, List, ListItem},
+    widgets::{Block, BorderType, Borders, List, ListItem, Paragraph},
 };
-use std::path::{Path, PathBuf};
 use std::fs;
-use crate::theme::Theme;
+use std::path::{Path, PathBuf};
 
 /// Dual-mode directory selector: manual input + browser
 #[derive(Debug)]
@@ -37,19 +37,19 @@ pub enum Focus {
 
 #[derive(Debug, Clone)]
 enum DirEntry {
-    Parent,  // ".." to go up
+    Parent, // ".." to go up
     Directory(PathBuf),
 }
 
 impl Default for DirectorySelector {
     fn default() -> Self {
         let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
-        
+
         Self {
             input_buffer: String::new(),
             focus: Focus::Input,
             current_dir: home.clone(),
-            entries: Vec::new(),  // Lazy load entries - don't load on default
+            entries: Vec::new(), // Lazy load entries - don't load on default
             selected_index: 0,
             error_message: None,
         }
@@ -62,26 +62,26 @@ impl DirectorySelector {
         // This makes initialization instant
         Ok(Self::default())
     }
-    
+
     /// Initialize/refresh entries if empty (returns true if entries were loaded)
     pub fn ensure_entries_loaded(&mut self) -> anyhow::Result<bool> {
         if self.entries.is_empty() {
             self.refresh_entries()?;
-            Ok(true)  // Entries were just loaded
+            Ok(true) // Entries were just loaded
         } else {
-            Ok(false)  // Entries already loaded
+            Ok(false) // Entries already loaded
         }
     }
 
     /// Refresh directory entries
     fn refresh_entries(&mut self) -> anyhow::Result<()> {
         self.entries.clear();
-        
+
         // Add parent entry if not at root
         if self.current_dir.parent().is_some() {
             self.entries.push(DirEntry::Parent);
         }
-        
+
         // Read directory entries
         if let Ok(entries) = fs::read_dir(&self.current_dir) {
             for entry in entries {
@@ -93,25 +93,22 @@ impl DirectorySelector {
                 }
             }
         }
-        
+
         // Sort entries: directories first, alphabetically
-        self.entries.sort_by(|a, b| {
-            match (a, b) {
-                (DirEntry::Parent, _) => std::cmp::Ordering::Less,
-                (_, DirEntry::Parent) => std::cmp::Ordering::Greater,
-                (DirEntry::Directory(a), DirEntry::Directory(b)) => {
-                    a.file_name()
-                        .unwrap_or_default()
-                        .cmp(&b.file_name().unwrap_or_default())
-                }
-            }
+        self.entries.sort_by(|a, b| match (a, b) {
+            (DirEntry::Parent, _) => std::cmp::Ordering::Less,
+            (_, DirEntry::Parent) => std::cmp::Ordering::Greater,
+            (DirEntry::Directory(a), DirEntry::Directory(b)) => a
+                .file_name()
+                .unwrap_or_default()
+                .cmp(&b.file_name().unwrap_or_default()),
         });
-        
+
         // Reset selection
         if self.selected_index >= self.entries.len() && !self.entries.is_empty() {
             self.selected_index = self.entries.len() - 1;
         }
-        
+
         Ok(())
     }
 
@@ -148,7 +145,7 @@ impl DirectorySelector {
             Focus::Input => Focus::Browser,
             Focus::Browser => Focus::Input,
         };
-        
+
         // If switching to browser and entries not loaded, start loading
         if self.focus == Focus::Browser && self.entries.is_empty() {
             // Load entries when browser gets focus - trigger background load
@@ -225,7 +222,10 @@ impl DirectorySelector {
             self.error_message = None;
             Ok(())
         } else {
-            self.error_message = Some(format!("Path does not exist or is not a directory: {}", path.display()));
+            self.error_message = Some(format!(
+                "Path does not exist or is not a directory: {}",
+                path.display()
+            ));
             Err(anyhow::anyhow!("Invalid path"))
         }
     }
@@ -237,21 +237,33 @@ impl DirectorySelector {
             return Err(anyhow::anyhow!("Path cannot be empty"));
         }
 
-        let path = PathBuf::from(path_str);
-        
-        if !path.exists() {
-            self.error_message = Some(format!("Path does not exist: {}", path.display()));
+        // Expand tilde if present
+        let expanded_path = if path_str.starts_with("~/") {
+            if let Some(home) = dirs::home_dir() {
+                home.join(&path_str[2..])
+            } else {
+                PathBuf::from(path_str)
+            }
+        } else {
+            PathBuf::from(path_str)
+        };
+
+        if !expanded_path.exists() {
+            self.error_message = Some(format!("Path does not exist: {}", expanded_path.display()));
             return Err(anyhow::anyhow!("Path does not exist"));
         }
 
-        if !path.is_dir() {
-            self.error_message = Some(format!("Path is not a directory: {}", path.display()));
+        if !expanded_path.is_dir() {
+            self.error_message = Some(format!(
+                "Path is not a directory: {}",
+                expanded_path.display()
+            ));
             return Err(anyhow::anyhow!("Not a directory"));
         }
 
         // Sync to browser
-        self.set_current_path(path.clone())?;
-        Ok(path)
+        self.set_current_path(expanded_path.clone())?;
+        Ok(expanded_path)
     }
 
     /// Get error message
@@ -267,24 +279,24 @@ impl DirectorySelector {
     /// Render the dual-mode selector
     /// Returns true if entries were just loaded (to trigger a redraw)
     pub fn render(&mut self, theme: &Theme, frame: &mut Frame, area: Rect) -> bool {
-        use ratatui::layout::{Layout, Direction, Constraint};
-        
-        // Only load entries when browser is focused or if entries are needed
-        // This prevents blocking during initialization
-        let entries_just_loaded = if self.focus == Focus::Browser && self.entries.is_empty() {
-            // Load entries if browser is focused (or about to be focused)
+        use ratatui::layout::{Constraint, Direction, Layout};
+
+        // Load entries immediately when first rendered (not just when focused)
+        // This ensures browser shows content right away
+        let entries_just_loaded = if self.entries.is_empty() {
+            // Load entries on first render
             self.ensure_entries_loaded().unwrap_or(false)
         } else {
             false
         };
-        
+
         // Split area: input box at top, browser below
         // Give input box enough height for borders, title, and content (at least 5 lines)
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(5),  // Input box (borders + title + content)
-                Constraint::Min(10),    // Browser
+                Constraint::Length(5), // Input box (borders + title + content)
+                Constraint::Min(10),   // Browser
             ])
             .split(area);
 
@@ -293,13 +305,13 @@ impl DirectorySelector {
 
         // Always render browser (always visible, shows loading if not loaded yet)
         self.render_browser(theme, frame, chunks[1]);
-        
-        entries_just_loaded  // Return true if we just loaded entries (triggers redraw)
+
+        entries_just_loaded // Return true if we just loaded entries (triggers redraw)
     }
 
     fn render_input_box(&self, theme: &Theme, frame: &mut Frame, area: Rect) {
         let is_focused = self.focus == Focus::Input;
-        
+
         // Always show placeholder text when empty - make it clearly visible
         // Use a clear label format to ensure it's always rendered
         let input_line = if self.input_buffer.is_empty() {
@@ -328,14 +340,16 @@ impl DirectorySelector {
 
         // Bold, bright border style when focused
         let border_style = if is_focused {
-            theme.primary_style().add_modifier(ratatui::style::Modifier::BOLD)
+            theme
+                .primary_style()
+                .add_modifier(ratatui::style::Modifier::BOLD)
         } else {
             theme.border_style()
         };
 
-        let title = if is_focused { 
-            " Folder Path [ACTIVE] - Type path and press Enter "
-        } else { 
+        let title = if is_focused {
+            " Folder Path [ACTIVE] - Type path (~/ supported) and press Enter "
+        } else {
             " Folder Path - Press Tab to focus here "
         };
 
@@ -363,7 +377,7 @@ impl DirectorySelector {
 
     fn render_browser(&mut self, theme: &Theme, frame: &mut Frame, area: Rect) {
         let is_focused = self.focus == Focus::Browser;
-        
+
         // Show loading message if entries not loaded yet
         if self.entries.is_empty() {
             let loading_text = format!("Loading directory: {}", self.current_dir.display());
@@ -372,27 +386,27 @@ impl DirectorySelector {
                     Block::default()
                         .title("Directory Browser")
                         .borders(Borders::ALL)
-                        .border_style(theme.border_style())
+                        .border_style(theme.border_style()),
                 )
                 .style(theme.dim_style());
             frame.render_widget(para, area);
             return;
         }
-        
+
         // Create list items from directory entries
-        let items: Vec<ListItem> = self.entries
+        let items: Vec<ListItem> = self
+            .entries
             .iter()
             .map(|entry| {
                 let display_name = match entry {
                     DirEntry::Parent => "..".to_string(),
-                    DirEntry::Directory(path) => {
-                        path.file_name()
-                            .unwrap_or_default()
-                            .to_string_lossy()
-                            .to_string()
-                    }
+                    DirEntry::Directory(path) => path
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string(),
                 };
-                
+
                 ListItem::new(display_name)
             })
             .collect();
@@ -400,17 +414,25 @@ impl DirectorySelector {
         let list = List::new(items)
             .block(
                 Block::default()
-                    .title(if is_focused { 
-                        format!("Directory Browser [FOCUSED] - {}", self.current_dir.display())
-                    } else { 
-                        format!("Directory Browser - {}", self.current_dir.display())
+                    .title(if is_focused {
+                        format!(
+                            "Directory Browser [FOCUSED] - Enter: navigate, Insert: select - {}",
+                            self.current_dir.display()
+                        )
+                    } else {
+                        format!(
+                            "Directory Browser - Tab to focus - {}",
+                            self.current_dir.display()
+                        )
                     })
                     .borders(Borders::ALL)
                     .border_style(if is_focused {
-                        theme.primary_style().add_modifier(ratatui::style::Modifier::BOLD)
+                        theme
+                            .primary_style()
+                            .add_modifier(ratatui::style::Modifier::BOLD)
                     } else {
                         theme.border_style()
-                    })
+                    }),
             )
             .highlight_style(if is_focused {
                 theme.highlight_style()
@@ -425,4 +447,3 @@ impl DirectorySelector {
         frame.render_stateful_widget(list, area, &mut state);
     }
 }
-

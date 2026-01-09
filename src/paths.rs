@@ -1,5 +1,5 @@
-use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
+use std::path::{Path, PathBuf};
 
 /// Resolve the XDG data directory for the application.
 /// Defaults to ~/.local/share/bdarchive if XDG_DATA_HOME is not set.
@@ -84,21 +84,26 @@ pub fn validate_file(path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Validate that a device path exists and is a block device.
+/// Validate that a device path exists and is accessible.
 pub fn validate_device(path: &Path) -> Result<()> {
     if !path.exists() {
         anyhow::bail!("Device does not exist: {}", path.display());
     }
-    
+
     // Check if it's a block device
     let _metadata = std::fs::metadata(path)
         .with_context(|| format!("Failed to read device metadata: {}", path.display()))?;
-    
+
     // On Linux, we can check if the path starts with /dev/
     if !path.starts_with("/dev/") {
         anyhow::bail!("Device path must be under /dev/: {}", path.display());
     }
-    
+
+    // Try to open the device for reading to check permissions
+    // This will fail if the user doesn't have permission
+    std::fs::File::open(path)
+        .with_context(|| format!("Cannot access device. Make sure you have permission to access optical drives (try: sudo usermod -a -G cdrom $USER): {}", path.display()))?;
+
     Ok(())
 }
 
@@ -116,7 +121,13 @@ pub fn expand_tilde(path: &str) -> PathBuf {
 pub fn make_relative(path: &Path, base: &Path) -> Result<PathBuf> {
     path.strip_prefix(base)
         .map(|p| p.to_path_buf())
-        .with_context(|| format!("Path {} is not under base {}", path.display(), base.display()))
+        .with_context(|| {
+            format!(
+                "Path {} is not under base {}",
+                path.display(),
+                base.display()
+            )
+        })
 }
 
 #[cfg(test)]
@@ -146,4 +157,3 @@ mod tests {
         assert!(make_relative(&path, &base).is_err());
     }
 }
-

@@ -1,8 +1,8 @@
+use crate::commands;
+use crate::dependencies;
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
-use crate::commands;
-use crate::dependencies;
 
 /// Generate a QR code for a disc ID.
 pub fn generate_qrcode(
@@ -35,7 +35,7 @@ pub fn generate_qrcode(
 
     let output_path_str = output_path.to_string_lossy().to_string();
     let mut args = vec![String::new(); 4]; // Pre-allocate with placeholders
-    
+
     match format {
         QrCodeFormat::PNG => {
             args[0] = "-t".to_string();
@@ -56,10 +56,11 @@ pub fn generate_qrcode(
             args[3] = output_path_str;
         }
     }
-    
+
     let args_str: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
     let args_with_id: Vec<&str> = [args_str.as_slice(), &[disc_id]].concat();
-    let output = commands::execute_command(qrencode_path_str.as_str(), args_with_id.as_slice(), dry_run)?;
+    let output =
+        commands::execute_command(qrencode_path_str.as_str(), args_with_id.as_slice(), dry_run)?;
 
     if !output.success {
         anyhow::bail!("qrencode failed: {}", output.stderr);
@@ -122,4 +123,3 @@ mod tests {
         ));
     }
 }
-

@@ -1,7 +1,7 @@
+use crate::paths;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use crate::paths;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(clippy::large_enum_variant)]
@@ -24,6 +24,10 @@ pub struct Config {
     #[serde(default)]
     pub verification: VerificationConfig,
 
+    /// Burn configuration
+    #[serde(default)]
+    pub burn: BurnConfig,
+
     /// Optional tools configuration
     #[serde(default)]
     pub optional_tools: OptionalToolsConfig,
@@ -45,6 +49,21 @@ impl Default for VerificationConfig {
         Self {
             auto_verify_after_burn: false,
             auto_mount: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BurnConfig {
+    /// Burn method: "iso" (create ISO first) or "direct" (burn directory directly)
+    #[serde(default = "default_burn_method")]
+    pub method: String,
+}
+
+impl Default for BurnConfig {
+    fn default() -> Self {
+        Self {
+            method: default_burn_method(),
         }
     }
 }
@@ -86,6 +105,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_burn_method() -> String {
+    "direct".to_string()  // Default to direct method for space efficiency
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -94,6 +117,7 @@ impl Default for Config {
             database_path: None,
             default_capacity_gb: default_capacity_gb(),
             verification: VerificationConfig::default(),
+            burn: BurnConfig::default(),
             optional_tools: OptionalToolsConfig::default(),
         }
     }
@@ -112,8 +136,7 @@ impl Config {
         let contents = std::fs::read_to_string(&config_path)
             .with_context(|| format!("Failed to read config file: {}", config_path.display()))?;
 
-        let config: Config = toml::from_str(&contents)
-            .context("Failed to parse config file")?;
+        let config: Config = toml::from_str(&contents).context("Failed to parse config file")?;
 
         Ok(config)
     }
@@ -123,8 +146,7 @@ impl Config {
         let config_path = Self::config_file_path()?;
         paths::ensure_config_dir()?;
 
-        let contents = toml::to_string_pretty(self)
-            .context("Failed to serialize config")?;
+        let contents = toml::to_string_pretty(self).context("Failed to serialize config")?;
 
         std::fs::write(&config_path, contents)
             .with_context(|| format!("Failed to write config file: {}", config_path.display()))?;
@@ -244,4 +266,3 @@ auto_verify_after_burn = true
         Ok(())
     }
 }
-

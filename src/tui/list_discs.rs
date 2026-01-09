@@ -1,9 +1,9 @@
+use crate::database::Disc;
+use crate::theme::Theme;
 use ratatui::{
     prelude::*,
     widgets::{Block, Borders, List, ListItem, Paragraph},
 };
-use crate::database::Disc;
-use crate::theme::Theme;
 
 #[derive(Debug, Clone)]
 pub struct ListDiscs {
@@ -27,11 +27,7 @@ impl ListDiscs {
 
     pub fn set_discs(&mut self, discs: Vec<Disc>) {
         self.discs = discs;
-        self.selected = if self.discs.is_empty() {
-            None
-        } else {
-            Some(0)
-        };
+        self.selected = if self.discs.is_empty() { None } else { Some(0) };
     }
 
     pub fn discs(&self) -> &[Disc] {
@@ -68,12 +64,13 @@ impl ListDiscs {
                     Block::default()
                         .title("Discs")
                         .borders(Borders::ALL)
-                        .border_style(theme.border_style())
+                        .border_style(theme.border_style()),
                 )
                 .style(theme.dim_style());
             frame.render_widget(para, area);
         } else {
-            let items: Vec<ListItem> = self.discs
+            let items: Vec<ListItem> = self
+                .discs
                 .iter()
                 .map(|d| {
                     ListItem::new(format!(
@@ -90,7 +87,7 @@ impl ListDiscs {
                     Block::default()
                         .title("Discs")
                         .borders(Borders::ALL)
-                        .border_style(theme.border_style())
+                        .border_style(theme.border_style()),
                 )
                 .highlight_style(theme.highlight_style())
                 .highlight_symbol("▶ ");
@@ -104,4 +101,3 @@ impl ListDiscs {
         }
     }
 }
-

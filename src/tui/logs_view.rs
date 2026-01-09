@@ -1,8 +1,8 @@
+use crate::theme::Theme;
 use ratatui::{
     prelude::*,
     widgets::{Block, Borders, Paragraph},
 };
-use crate::theme::Theme;
 
 #[derive(Debug, Clone)]
 pub struct LogsView {
@@ -27,10 +27,9 @@ impl LogsView {
                 Block::default()
                     .title("Logs")
                     .borders(Borders::ALL)
-                    .border_style(theme.border_style())
+                    .border_style(theme.border_style()),
             )
             .style(theme.primary_style());
         frame.render_widget(para, area);
     }
 }
-

@@ -1,8 +1,8 @@
-use anyhow::Result;
-use tracing_subscriber::{fmt, EnvFilter, prelude::*};
 use crate::paths;
+use anyhow::Result;
+use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-/// Initialize logging to both console and file.
+/// Initialize logging to file only (console output interferes with TUI).
 pub fn init_logging() -> Result<()> {
     let logs_dir = paths::logs_dir()?;
     std::fs::create_dir_all(&logs_dir)?;
@@ -16,29 +16,22 @@ pub fn init_logging() -> Result<()> {
         .append(true)
         .open(&log_file)?;
 
-    // Console subscriber
-    let console_layer = fmt::layer()
-        .with_target(false)
-        .with_writer(std::io::stderr)
-        .with_ansi(true);
-
-    // File subscriber
+    // File subscriber only (no console output to avoid corrupting TUI)
     let file_layer = fmt::layer()
         .with_target(true)
         .with_writer(file)
         .with_ansi(false);
 
     // Combine layers
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info"));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
     tracing_subscriber::registry()
         .with(filter)
-        .with(console_layer)
         .with(file_layer)
         .init();
 
-    tracing::info!("Logging initialized. Log file: {}", log_file.display());
+    // Don't log this to console since we disabled console logging
+    eprintln!("Logging initialized. Log file: {}", log_file.display());
 
     Ok(())
 }
@@ -47,7 +40,7 @@ pub fn init_logging() -> Result<()> {
 fn format_date(timestamp: u64) -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let datetime = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(timestamp);
-    
+
     // Simple date formatting without external dependencies
     // This is a fallback; in production you might want to use a date library
     // For now, we'll use a simpler approach
@@ -90,4 +83,3 @@ fn format_date_simple() -> String {
         .as_secs();
     format_date(now)
 }
-

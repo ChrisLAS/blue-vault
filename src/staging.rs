@@ -10,12 +10,23 @@ pub fn stage_files(
     use_rsync: bool,
     dry_run: bool,
 ) -> Result<Vec<PathBuf>> {
+    stage_files_with_progress(disc_root, source_folders, use_rsync, dry_run, None)
+}
+
+/// Stage files with progress callback.
+pub fn stage_files_with_progress(
+    disc_root: &Path,
+    source_folders: &[PathBuf],
+    use_rsync: bool,
+    dry_run: bool,
+    mut progress_callback: Option<Box<dyn FnMut(&str) + Send>>,
+) -> Result<Vec<PathBuf>> {
     let archive_dir = disc_root.join("ARCHIVE");
     fs::create_dir_all(&archive_dir)?;
 
     let mut staged_paths = Vec::new();
 
-    for source in source_folders {
+    for (i, source) in source_folders.iter().enumerate() {
         if !source.exists() {
             warn!("Source folder does not exist: {}", source.display());
             continue;
@@ -30,6 +41,11 @@ pub fn stage_files(
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown");
+
+        if let Some(ref mut callback) = progress_callback {
+            callback(&format!("Staging folder {}/{}: {}", i + 1, source_folders.len(), folder_name));
+        }
+
         let dest = archive_dir.join(folder_name);
 
         if use_rsync {
@@ -47,34 +63,41 @@ pub fn stage_files(
 
 /// Stage files using rsync.
 fn stage_with_rsync(source: &Path, dest: &Path, dry_run: bool) -> Result<()> {
-    debug!("Staging with rsync: {} -> {}", source.display(), dest.display());
+    debug!(
+        "Staging with rsync: {} -> {} (dry_run: {})",
+        source.display(),
+        dest.display(),
+        dry_run
+    );
 
     let source_str = format!("{}/", source.display());
     let dest_str = dest.display().to_string();
-    let args = vec![
-        "-av",
-        "--delete",
-        &source_str,
-        &dest_str,
-    ];
+    let args = vec!["-av", "--delete", &source_str, &dest_str];
 
     if dry_run {
-        println!("[DRY RUN] Would run: rsync {}", args.join(" "));
+        info!("[DRY RUN] Would run: rsync {}", args.join(" "));
         return Ok(());
     }
 
-    crate::commands::execute_command("rsync", &args, dry_run)
-        .context("rsync failed")?;
+    crate::commands::execute_command("rsync", &args, dry_run).context("rsync failed")?;
 
     Ok(())
 }
 
 /// Stage files using standard copy.
 fn stage_with_copy(source: &Path, dest: &Path, dry_run: bool) -> Result<()> {
-    debug!("Staging with copy: {} -> {}", source.display(), dest.display());
+    debug!(
+        "Staging with copy: {} -> {}",
+        source.display(),
+        dest.display()
+    );
 
     if dry_run {
-        println!("[DRY RUN] Would copy: {} -> {}", source.display(), dest.display());
+        info!(
+            "[DRY RUN] Would copy: {} -> {}",
+            source.display(),
+            dest.display()
+        );
         return Ok(());
     }
 
@@ -98,14 +121,13 @@ fn copy_directory_recursive(source: &Path, dest: &Path) -> Result<()> {
         if path.is_dir() {
             copy_directory_recursive(&path, &dest_path)?;
         } else {
-            fs::copy(&path, &dest_path)
-                .with_context(|| {
-                    format!(
-                        "Failed to copy file: {} -> {}",
-                        path.display(),
-                        dest_path.display()
-                    )
-                })?;
+            fs::copy(&path, &dest_path).with_context(|| {
+                format!(
+                    "Failed to copy file: {} -> {}",
+                    path.display(),
+                    dest_path.display()
+                )
+            })?;
         }
     }
 
@@ -117,11 +139,9 @@ pub fn calculate_directory_size(path: &Path) -> Result<u64> {
     let mut total = 0u64;
 
     if path.is_file() {
-        return Ok(
-            fs::metadata(path)
-                .with_context(|| format!("Failed to read file metadata: {}", path.display()))?
-                .len(),
-        );
+        return Ok(fs::metadata(path)
+            .with_context(|| format!("Failed to read file metadata: {}", path.display()))?
+            .len());
     }
 
     let entries = fs::read_dir(path)
@@ -153,8 +173,8 @@ pub fn check_capacity(source_folders: &[PathBuf], capacity_bytes: u64) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use std::fs;
+    use tempfile::TempDir;
 
     #[test]
     fn test_stage_with_copy() -> Result<()> {
@@ -204,4 +224,3 @@ mod tests {
         Ok(())
     }
 }
-

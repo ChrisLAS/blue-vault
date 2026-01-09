@@ -1,8 +1,8 @@
+use crate::theme::Theme;
 use ratatui::{
     prelude::*,
     widgets::{Block, Borders, List, ListItem},
 };
-use crate::theme::Theme;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MainMenuAction {
@@ -73,7 +73,7 @@ impl MainMenu {
                     .title("BlueVault")
                     .borders(Borders::ALL)
                     .border_style(theme.border_style())
-                    .style(theme.primary_style())
+                    .style(theme.primary_style()),
             )
             .highlight_style(theme.highlight_style())
             .highlight_symbol("▶ ");
@@ -83,4 +83,3 @@ impl MainMenu {
         frame.render_stateful_widget(list, area, &mut state);
     }
 }
-

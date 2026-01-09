@@ -52,7 +52,8 @@ pub fn search_files(conn: &Connection, query: &SearchQuery) -> Result<Vec<Search
         (sql.to_string(), Some(pattern))
     } else {
         // No filters, return all
-        let sql = "SELECT disc_id, rel_path, size, mtime, sha256 FROM files ORDER BY rel_path LIMIT 1000";
+        let sql =
+            "SELECT disc_id, rel_path, size, mtime, sha256 FROM files ORDER BY rel_path LIMIT 1000";
         (sql.to_string(), None)
     };
 
@@ -137,4 +138,3 @@ mod tests {
         assert_eq!(format_size(1073741824), "1.00 GB");
     }
 }
-

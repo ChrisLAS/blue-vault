@@ -1,7 +1,7 @@
+use crate::commands;
 use anyhow::{Context, Result};
 use std::path::Path;
 use tracing::{debug, info};
-use crate::commands;
 
 /// Create an ISO image from a directory using xorriso.
 pub fn create_iso(
@@ -18,8 +18,7 @@ pub fn create_iso(
     );
 
     // Validate source directory
-    crate::paths::validate_dir(source_dir)
-        .context("Source directory validation failed")?;
+    crate::paths::validate_dir(source_dir).context("Source directory validation failed")?;
 
     // Ensure output directory exists
     if let Some(parent) = output_iso.parent() {
@@ -31,22 +30,21 @@ pub fn create_iso(
     let output_iso_str = output_iso.to_string_lossy().to_string();
     let source_dir_str = source_dir.to_string_lossy().to_string();
     let args = vec![
-        "-as", "mkisofs",  // Use mkisofs compatible mode
-        "-r",              // Rock Ridge (Unix file names and permissions)
-        "-J",              // Joliet (Windows compatibility)
-        "-V", volume_label, // Volume label
-        "-o", &output_iso_str, // Output file
-        &source_dir_str,        // Source directory
+        "-as",
+        "mkisofs", // Use mkisofs compatible mode
+        "-r",      // Rock Ridge (Unix file names and permissions)
+        "-J",      // Joliet (Windows compatibility)
+        "-V",
+        volume_label, // Volume label
+        "-o",
+        &output_iso_str, // Output file
+        &source_dir_str, // Source directory
     ];
 
     let output = commands::execute_command("xorriso", &args, dry_run)?;
 
     if !output.success {
-        anyhow::bail!(
-            "xorriso failed: {}\n{}",
-            output.stderr,
-            output.stdout
-        );
+        anyhow::bail!("xorriso failed: {}\n{}", output.stderr, output.stdout);
     }
 
     debug!("ISO image created: {}", output_iso.display());
@@ -63,8 +61,8 @@ pub fn get_iso_size(iso_path: &Path) -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use std::fs;
+    use tempfile::TempDir;
 
     #[test]
     fn test_create_iso_dry_run() -> Result<()> {
@@ -91,4 +89,3 @@ mod tests {
         Ok(())
     }
 }
-

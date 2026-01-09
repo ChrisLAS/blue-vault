@@ -159,4 +159,3 @@ mod tests {
         assert!(output.contains("]"));
     }
 }
-

@@ -1,9 +1,9 @@
+use crate::theme::Theme;
+use crate::ui::animations::{AnimationThrottle, Spinner};
 use ratatui::{
     prelude::*,
     widgets::{Block, Borders, Paragraph},
 };
-use crate::theme::Theme;
-use crate::ui::animations::{AnimationThrottle, Spinner};
 
 /// Disc read/write activity indicator (80s style)
 pub struct DiscActivity {
@@ -85,7 +85,10 @@ impl DiscActivity {
         // LBA counter
         let lba_text = if self.lba_target > 0 {
             let percent = (self.lba as f64 / self.lba_target as f64 * 100.0) as u8;
-            format!("LBA {:06} → {:06} ({:3}%)", self.lba, self.lba_target, percent)
+            format!(
+                "LBA {:06} → {:06} ({:3}%)",
+                self.lba, self.lba_target, percent
+            )
         } else {
             format!("LBA {:06}", self.lba)
         };
@@ -96,10 +99,7 @@ impl DiscActivity {
         let buffer_text = format!("BUF {:3}% {}", buffer_percent, buffer_bar);
 
         // Combine into status line
-        let status_text = format!(
-            "{} {} │ {} │ {}",
-            disc_icon, op_text, lba_text, buffer_text
-        );
+        let status_text = format!("{} {} │ {} │ {}", disc_icon, op_text, lba_text, buffer_text);
 
         let paragraph = Paragraph::new(status_text)
             .style(theme.primary_style())
@@ -124,12 +124,8 @@ impl Default for DiscActivity {
 fn create_mini_bar(percent: u8, width: usize) -> String {
     let filled = (percent as usize * width) / 100;
     let empty = width.saturating_sub(filled);
-    
-    format!(
-        "[{}{}]",
-        "█".repeat(filled),
-        "░".repeat(empty)
-    )
+
+    format!("[{}{}]", "█".repeat(filled), "░".repeat(empty))
 }
 
 #[cfg(test)]
@@ -142,9 +138,8 @@ mod tests {
         activity.set_operation(DiscOperation::Reading);
         activity.set_lba(1234, 10000);
         activity.set_buffer(0.5);
-        
+
         // Just ensure it doesn't panic
         activity.update();
     }
 }
-

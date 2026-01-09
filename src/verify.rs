@@ -1,8 +1,8 @@
+use crate::commands;
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tracing::{debug, info, warn};
-use crate::commands;
 
 /// Verify a disc by checking SHA256SUMS.
 pub fn verify_disc(
@@ -15,14 +15,14 @@ pub fn verify_disc(
     let sha256sums_path = mountpoint.join("SHA256SUMS.txt");
 
     if !sha256sums_path.exists() {
-        anyhow::bail!(
-            "SHA256SUMS.txt not found at: {}",
-            sha256sums_path.display()
-        );
+        anyhow::bail!("SHA256SUMS.txt not found at: {}", sha256sums_path.display());
     }
 
     if dry_run {
-        println!("[DRY RUN] Would verify SHA256SUMS.txt at: {}", mountpoint.display());
+        debug!(
+            "[DRY RUN] Would verify SHA256SUMS.txt at: {}",
+            mountpoint.display()
+        );
         return Ok(VerificationResult {
             success: true,
             files_checked: 0,
@@ -75,13 +75,13 @@ fn parse_sha256sum_output(stdout: &str, stderr: &str) -> (u32, u32) {
     // sha256sum -c outputs lines like:
     // path/to/file: OK
     // path/to/file: FAILED
-    
+
     let combined = format!("{}\n{}", stdout, stderr);
     let lines: Vec<&str> = combined.lines().collect();
-    
+
     let mut checked = 0u32;
     let mut failed = 0u32;
-    
+
     for line in lines {
         if line.contains(": OK") {
             checked += 1;
@@ -93,7 +93,7 @@ fn parse_sha256sum_output(stdout: &str, stderr: &str) -> (u32, u32) {
             failed += 1;
         }
     }
-    
+
     (checked, failed)
 }
 
@@ -102,7 +102,11 @@ pub fn mount_device(device: &str, mountpoint: &Path, dry_run: bool) -> Result<()
     info!("Mounting device {} to {}", device, mountpoint.display());
 
     if dry_run {
-        println!("[DRY RUN] Would mount {} to {}", device, mountpoint.display());
+        debug!(
+            "[DRY RUN] Would mount {} to {}",
+            device,
+            mountpoint.display()
+        );
         return Ok(());
     }
 
@@ -127,7 +131,7 @@ pub fn unmount_device(mountpoint: &Path, dry_run: bool) -> Result<()> {
     info!("Unmounting: {}", mountpoint.display());
 
     if dry_run {
-        println!("[DRY RUN] Would unmount: {}", mountpoint.display());
+        debug!("[DRY RUN] Would unmount: {}", mountpoint.display());
         return Ok(());
     }
 
@@ -147,7 +151,7 @@ pub fn unmount_device(mountpoint: &Path, dry_run: bool) -> Result<()> {
 /// Find a suitable mountpoint for temporary mounting.
 pub fn get_temporary_mountpoint() -> Result<PathBuf> {
     use std::env;
-    
+
     // Try common temporary mount directories
     let candidates = vec![
         PathBuf::from("/tmp/bdarchive_mount"),
@@ -196,4 +200,3 @@ mod tests {
         assert_eq!(failed, 1);
     }
 }
-
