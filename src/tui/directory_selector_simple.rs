@@ -9,6 +9,8 @@ use ratatui::{
 };
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
+use std::thread;
 
 /// Dual-mode directory selector: manual input + browser
 #[derive(Debug)]
@@ -25,6 +27,12 @@ pub struct DirectorySelector {
     selected_index: usize,
     /// Validation error message
     error_message: Option<String>,
+    /// Loading state for async directory reading
+    loading_state: LoadingState,
+    /// Channel receiver for async loading results
+    loading_receiver: Option<mpsc::Receiver<LoadingResult>>,
+    /// Handle to the loading task
+    _loading_task: Option<thread::JoinHandle<()>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,6 +49,24 @@ enum DirEntry {
     Directory(PathBuf),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LoadingState {
+    /// Not loading, entries are ready
+    Idle,
+    /// Currently loading directory entries
+    Loading,
+    /// Loading completed successfully
+    Loaded,
+    /// Loading failed with an error
+    Error(String),
+}
+
+#[derive(Debug)]
+struct LoadingResult {
+    entries: Vec<DirEntry>,
+    error: Option<String>,
+}
+
 impl Default for DirectorySelector {
     fn default() -> Self {
         let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
@@ -52,6 +78,9 @@ impl Default for DirectorySelector {
             entries: Vec::new(), // Lazy load entries - don't load on default
             selected_index: 0,
             error_message: None,
+            loading_state: LoadingState::Idle,
+            loading_receiver: None,
+            _loading_task: None,
         }
     }
 }
@@ -64,16 +93,76 @@ impl DirectorySelector {
     }
 
     /// Initialize/refresh entries if empty (returns true if entries were loaded)
+    /// Now supports async loading - will start background load if needed
     pub fn ensure_entries_loaded(&mut self) -> anyhow::Result<bool> {
-        if self.entries.is_empty() {
-            self.refresh_entries()?;
-            Ok(true) // Entries were just loaded
+        if self.entries.is_empty() && self.loading_state == LoadingState::Idle {
+            // Start async loading instead of synchronous
+            self.start_async_loading()?;
+            Ok(false) // Loading started, but not complete yet
         } else {
-            Ok(false) // Entries already loaded
+            Ok(!self.entries.is_empty()) // Already loaded or loading
         }
     }
 
-    /// Refresh directory entries
+    /// Start asynchronous directory loading
+    fn start_async_loading(&mut self) -> anyhow::Result<()> {
+        if self.loading_state == LoadingState::Loading {
+            return Ok(()); // Already loading
+        }
+
+        self.loading_state = LoadingState::Loading;
+        let current_dir = self.current_dir.clone();
+        let (tx, rx) = mpsc::channel();
+
+        self.loading_receiver = Some(rx);
+
+        // Spawn thread to load directory entries
+        let handle = thread::spawn(move || {
+            let result = load_directory_entries_sync(current_dir);
+            let _ = tx.send(result);
+        });
+
+        self._loading_task = Some(handle);
+        Ok(())
+    }
+
+    /// Check if async loading is complete and update state
+    pub fn check_async_loading(&mut self) -> bool {
+        if let Some(ref mut receiver) = self.loading_receiver {
+            if let Ok(result) = receiver.try_recv() {
+                // Loading completed
+                match result.error {
+                    None => {
+                        self.entries = result.entries;
+                        self.loading_state = LoadingState::Loaded;
+                        // Sort entries: directories first, alphabetically
+                        self.entries.sort_by(|a, b| match (a, b) {
+                            (DirEntry::Parent, _) => std::cmp::Ordering::Less,
+                            (_, DirEntry::Parent) => std::cmp::Ordering::Greater,
+                            (DirEntry::Directory(a), DirEntry::Directory(b)) => a
+                                .file_name()
+                                .unwrap_or_default()
+                                .cmp(&b.file_name().unwrap_or_default()),
+                        });
+                        // Reset selection
+                        if self.selected_index >= self.entries.len() && !self.entries.is_empty() {
+                            self.selected_index = self.entries.len() - 1;
+                        }
+                    }
+                    Some(error) => {
+                        self.loading_state = LoadingState::Error(error);
+                    }
+                }
+                // Clean up
+                self.loading_receiver = None;
+                self._loading_task = None;
+                return true; // State changed
+            }
+        }
+        false // No change
+    }
+
+    /// Refresh directory entries synchronously (fallback method)
     fn refresh_entries(&mut self) -> anyhow::Result<()> {
         self.entries.clear();
 
@@ -109,6 +198,16 @@ impl DirectorySelector {
             self.selected_index = self.entries.len() - 1;
         }
 
+        Ok(())
+    }
+
+    /// Force synchronous refresh (for when async loading fails)
+    pub fn force_sync_refresh(&mut self) -> anyhow::Result<()> {
+        self.loading_state = LoadingState::Idle;
+        self.loading_receiver = None;
+        self._loading_task = None;
+        self.refresh_entries()?;
+        self.loading_state = LoadingState::Loaded;
         Ok(())
     }
 
@@ -175,7 +274,10 @@ impl DirectorySelector {
                 DirEntry::Parent => {
                     if let Some(parent) = self.current_dir.parent() {
                         self.current_dir = parent.to_path_buf();
-                        self.refresh_entries()?;
+                        // Start async loading for new directory
+                        self.loading_state = LoadingState::Idle;
+                        self.entries.clear();
+                        self.start_async_loading()?;
                         self.selected_index = 0;
                         // Update input buffer to match
                         self.input_buffer = self.current_dir.display().to_string();
@@ -185,7 +287,10 @@ impl DirectorySelector {
                     let new_path = path.clone();
                     let path_str = new_path.display().to_string();
                     self.current_dir = new_path;
-                    self.refresh_entries()?;
+                    // Start async loading for new directory
+                    self.loading_state = LoadingState::Idle;
+                    self.entries.clear();
+                    self.start_async_loading()?;
                     self.selected_index = 0;
                     // Update input buffer to match
                     self.input_buffer = path_str;
@@ -217,7 +322,10 @@ impl DirectorySelector {
         if path.exists() && path.is_dir() {
             self.current_dir = path.clone();
             self.input_buffer = path.display().to_string();
-            self.refresh_entries()?;
+            // Start async loading for new directory
+            self.loading_state = LoadingState::Idle;
+            self.entries.clear();
+            self.start_async_loading()?;
             self.selected_index = 0;
             self.error_message = None;
             Ok(())
@@ -276,15 +384,24 @@ impl DirectorySelector {
         self.error_message = None;
     }
 
+    /// Retry loading if there was an error
+    pub fn retry_loading(&mut self) -> anyhow::Result<()> {
+        if let LoadingState::Error(_) = self.loading_state {
+            self.start_async_loading()?;
+        }
+        Ok(())
+    }
+
     /// Render the dual-mode selector
     /// Returns true if entries were just loaded (to trigger a redraw)
     pub fn render(&mut self, theme: &Theme, frame: &mut Frame, area: Rect) -> bool {
         use ratatui::layout::{Constraint, Direction, Layout};
 
-        // Load entries immediately when first rendered (not just when focused)
-        // This ensures browser shows content right away
-        let entries_just_loaded = if self.entries.is_empty() {
-            // Load entries on first render
+        // Check if async loading completed
+        let async_completed = self.check_async_loading();
+
+        // Start loading if needed and not already loading
+        let started_loading = if self.entries.is_empty() && self.loading_state == LoadingState::Idle {
             self.ensure_entries_loaded().unwrap_or(false)
         } else {
             false
@@ -306,7 +423,7 @@ impl DirectorySelector {
         // Always render browser (always visible, shows loading if not loaded yet)
         self.render_browser(theme, frame, chunks[1]);
 
-        entries_just_loaded // Return true if we just loaded entries (triggers redraw)
+        async_completed || started_loading // Return true if state changed
     }
 
     fn render_input_box(&self, theme: &Theme, frame: &mut Frame, area: Rect) {
@@ -378,19 +495,47 @@ impl DirectorySelector {
     fn render_browser(&mut self, theme: &Theme, frame: &mut Frame, area: Rect) {
         let is_focused = self.focus == Focus::Browser;
 
-        // Show loading message if entries not loaded yet
-        if self.entries.is_empty() {
-            let loading_text = format!("Loading directory: {}", self.current_dir.display());
-            let para = Paragraph::new(loading_text)
-                .block(
-                    Block::default()
-                        .title("Directory Browser")
-                        .borders(Borders::ALL)
-                        .border_style(theme.border_style()),
-                )
-                .style(theme.dim_style());
-            frame.render_widget(para, area);
-            return;
+        // Show different content based on loading state
+        match self.loading_state {
+            LoadingState::Idle | LoadingState::Loading => {
+                let status_text = if self.loading_state == LoadingState::Loading {
+                    format!("🔄 Loading directory: {}", self.current_dir.display())
+                } else {
+                    format!("⏳ Preparing to load: {}", self.current_dir.display())
+                };
+
+                let para = Paragraph::new(status_text)
+                    .block(
+                        Block::default()
+                            .title("Directory Browser")
+                            .borders(Borders::ALL)
+                            .border_style(theme.border_style()),
+                    )
+                    .style(theme.secondary_style());
+                frame.render_widget(para, area);
+                return;
+            }
+            LoadingState::Error(ref error_msg) => {
+                let error_text = format!(
+                    "❌ Failed to load directory: {}\n\nError: {}\n\nPress 'R' to retry",
+                    self.current_dir.display(),
+                    error_msg
+                );
+
+                let para = Paragraph::new(error_text)
+                    .block(
+                        Block::default()
+                            .title("Directory Browser - ERROR")
+                            .borders(Borders::ALL)
+                            .border_style(theme.error_style()),
+                    )
+                    .style(theme.error_style());
+                frame.render_widget(para, area);
+                return;
+            }
+            LoadingState::Loaded => {
+                // Directory loaded successfully, show entries
+            }
         }
 
         // Create list items from directory entries
@@ -445,5 +590,34 @@ impl DirectorySelector {
         state.select(Some(self.selected_index));
 
         frame.render_stateful_widget(list, area, &mut state);
+    }
+}
+
+/// Synchronous function to load directory entries in a background thread
+fn load_directory_entries_sync(current_dir: PathBuf) -> LoadingResult {
+    let mut entries = Vec::new();
+
+    // Add parent entry if not at root
+    if current_dir.parent().is_some() {
+        entries.push(DirEntry::Parent);
+    }
+
+    // Read directory entries synchronously
+    match fs::read_dir(&current_dir) {
+        Ok(dir_entries) => {
+            for entry in dir_entries {
+                if let Ok(entry) = entry {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        entries.push(DirEntry::Directory(path));
+                    }
+                }
+            }
+            LoadingResult { entries, error: None }
+        }
+        Err(e) => LoadingResult {
+            entries: Vec::new(),
+            error: Some(format!("Failed to read directory: {}", e)),
+        },
     }
 }

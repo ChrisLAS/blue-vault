@@ -454,6 +454,20 @@ impl App {
                             _ => {}
                         }
                     }
+                    KeyCode::Char('r') | KeyCode::Char('R') => {
+                        match flow.current_step() {
+                            tui::new_disc::NewDiscStep::SelectFolders => {
+                                // R key: retry loading if there was an error
+                                if let Some(ref mut selector) = flow.directory_selector_mut() {
+                                    if let Err(e) = selector.retry_loading() {
+                                        tracing::error!("Failed to retry directory loading: {}", e);
+                                    }
+                                    return Ok(true);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
                     KeyCode::Backspace => match flow.current_step() {
                         tui::new_disc::NewDiscStep::EnterDiscId
                         | tui::new_disc::NewDiscStep::EnterNotes => {
@@ -923,8 +937,10 @@ impl App {
         // Step 4: Burn to disc
         info!("Starting burning step: dry_run={}", dry_run);
         flow.set_processing_state(tui::new_disc::ProcessingState::Burning);
+
         if dry_run {
             flow.set_status("Skipping burn (dry run mode)".to_string());
+            flow.set_file_progress("DRY RUN: Would burn ISO to disc".to_string());
             info!("Skipping burn due to dry run mode");
         } else {
             flow.set_status(format!("Burning to {}...", self.config.device));
@@ -1731,7 +1747,7 @@ fn main() -> Result<()> {
     paths::ensure_config_dir()?;
 
     // Load configuration
-    let config = Config::load()?;
+    let mut config = Config::load()?;
     config.validate()?;
 
     // Initialize database

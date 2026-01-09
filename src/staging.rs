@@ -26,6 +26,27 @@ pub fn stage_files_with_progress(
 
     let mut staged_paths = Vec::new();
 
+    // Count total files and size for progress reporting
+    let mut total_files = 0;
+    let mut processed_files = 0;
+    let mut total_size_bytes = 0u64;
+
+    // First pass: count files and estimate total size
+    for source in source_folders {
+        if source.exists() && source.is_dir() {
+            if let Ok(count) = count_files_and_size(source) {
+                total_files += count.0;
+                total_size_bytes += count.1;
+            }
+        }
+    }
+
+    if let Some(ref mut callback) = progress_callback {
+        let size_mb = total_size_bytes / (1024 * 1024);
+        callback(&format!("📁 Preparing to stage {} files ({}MB) from {} folders",
+                         total_files, size_mb, source_folders.len()));
+    }
+
     for (i, source) in source_folders.iter().enumerate() {
         if !source.exists() {
             warn!("Source folder does not exist: {}", source.display());
@@ -43,22 +64,178 @@ pub fn stage_files_with_progress(
             .unwrap_or("unknown");
 
         if let Some(ref mut callback) = progress_callback {
-            callback(&format!("Staging folder {}/{}: {}", i + 1, source_folders.len(), folder_name));
+            callback(&format!("📂 Staging folder {}/{}: {} ({} files processed so far)",
+                             i + 1, source_folders.len(), folder_name, processed_files));
         }
 
         let dest = archive_dir.join(folder_name);
 
-        if use_rsync {
-            stage_with_rsync(source, &dest, dry_run)?;
-        } else {
-            stage_with_copy(source, &dest, dry_run)?;
-        }
+    // Enhanced staging with file-by-file progress
+    if use_rsync {
+        stage_with_rsync_progress(source, &dest, dry_run, &mut progress_callback, &mut processed_files)?;
+    } else {
+        stage_with_copy_progress(source, &dest, dry_run, &mut progress_callback, &mut processed_files)?;
+    }
 
         staged_paths.push(dest);
     }
 
-    info!("Staged {} folders", staged_paths.len());
+    if let Some(ref mut callback) = progress_callback {
+        callback(&format!("✅ Staging complete: {} folders, {} files processed", staged_paths.len(), processed_files));
+    }
+
+    info!("Staged {} folders, {} files", staged_paths.len(), processed_files);
     Ok(staged_paths)
+}
+
+/// Count files and total size in a directory tree.
+fn count_files_and_size(dir: &Path) -> Result<(usize, u64)> {
+    let mut file_count = 0;
+    let mut total_size = 0u64;
+
+    fn walk_dir(path: &Path, file_count: &mut usize, total_size: &mut u64) -> Result<()> {
+        if let Ok(entries) = fs::read_dir(path) {
+            for entry in entries {
+                if let Ok(entry) = entry {
+                    let path = entry.path();
+                    if path.is_file() {
+                        *file_count += 1;
+                        if let Ok(metadata) = entry.metadata() {
+                            *total_size += metadata.len();
+                        }
+                    } else if path.is_dir() {
+                        walk_dir(&path, file_count, total_size)?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    walk_dir(dir, &mut file_count, &mut total_size)?;
+    Ok((file_count, total_size))
+}
+
+/// Stage files using rsync with progress reporting.
+fn stage_with_rsync_progress(
+    source: &Path,
+    dest: &Path,
+    dry_run: bool,
+    progress_callback: &mut Option<Box<dyn FnMut(&str) + Send>>,
+    processed_files: &mut usize,
+) -> Result<usize> {
+    debug!(
+        "Staging with rsync: {} -> {} (dry_run: {})",
+        source.display(),
+        dest.display(),
+        dry_run
+    );
+
+    // For rsync, we can't easily track individual file progress,
+    // so we'll just show the folder being processed
+    let source_str = format!("{}/", source.display());
+    let dest_str = dest.display().to_string();
+    let args = vec!["-av", "--delete", &source_str, &dest_str];
+
+    if dry_run {
+        info!("[DRY RUN] Would run: rsync {}", args.join(" "));
+        // Estimate files processed for dry run
+        if let Ok((count, _)) = count_files_and_size(source) {
+            *processed_files += count;
+        }
+        return Ok(0);
+    }
+
+    if let Some(ref mut callback) = progress_callback {
+        callback(&format!("🔄 Running rsync: {} -> {}", source.display(), dest.display()));
+    }
+
+    crate::commands::execute_command("rsync", &args, dry_run).context("rsync failed")?;
+
+    // Count files that were actually processed
+    let file_count = if let Ok((count, _)) = count_files_and_size(dest) {
+        count
+    } else {
+        0
+    };
+    *processed_files += file_count;
+
+    Ok(file_count)
+}
+
+/// Stage files using copy with detailed progress reporting.
+fn stage_with_copy_progress(
+    source: &Path,
+    dest: &Path,
+    dry_run: bool,
+    progress_callback: &mut Option<Box<dyn FnMut(&str) + Send>>,
+    processed_files: &mut usize,
+) -> Result<usize> {
+    debug!(
+        "Staging with copy: {} -> {} (dry_run: {})",
+        source.display(),
+        dest.display(),
+        dry_run
+    );
+
+    if dry_run {
+        info!("[DRY RUN] Would copy: {} -> {}", source.display(), dest.display());
+        // Estimate files processed for dry run
+        if let Ok((count, _)) = count_files_and_size(source) {
+            *processed_files += count;
+        }
+        return Ok(0);
+    }
+
+    fs::create_dir_all(dest)?;
+
+    let mut files_copied = 0;
+
+    fn copy_recursive(
+        src: &Path,
+        dst: &Path,
+        progress_callback: &mut Option<Box<dyn FnMut(&str) + Send>>,
+        files_copied: &mut usize,
+    ) -> Result<()> {
+        if let Ok(entries) = fs::read_dir(src) {
+            for entry in entries {
+                if let Ok(entry) = entry {
+                    let src_path = entry.path();
+                    let file_name = src_path.file_name().unwrap_or_default();
+                    let dst_path = dst.join(file_name);
+
+                    if src_path.is_file() {
+                        // Copy file
+                        fs::copy(&src_path, &dst_path)?;
+                        *files_copied += 1;
+
+                        // Report progress for larger files or every 10 files
+                        if *files_copied % 10 == 0 || src_path.metadata()?.len() > 10 * 1024 * 1024 {
+                            if let Some(ref mut callback) = progress_callback {
+                                let size_mb = src_path.metadata()?.len() / (1024 * 1024);
+                                callback(&format!("📄 Copied: {} ({}MB) - {} files total",
+                                                 file_name.to_string_lossy(), size_mb, files_copied));
+                            }
+                        }
+                    } else if src_path.is_dir() {
+                        // Create directory and recurse
+                        fs::create_dir_all(&dst_path)?;
+                        copy_recursive(&src_path, &dst_path, progress_callback, files_copied)?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    if let Some(ref mut callback) = progress_callback {
+        callback(&format!("📋 Starting copy: {} -> {}", source.display(), dest.display()));
+    }
+
+    copy_recursive(source, dest, progress_callback, &mut files_copied)?;
+    *processed_files += files_copied;
+
+    Ok(files_copied)
 }
 
 /// Stage files using rsync.
@@ -224,3 +401,4 @@ mod tests {
         Ok(())
     }
 }
+

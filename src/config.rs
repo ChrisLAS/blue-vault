@@ -2,11 +2,12 @@ use crate::paths;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use tracing::info;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[allow(clippy::large_enum_variant)]
 pub struct Config {
-    /// Blu-ray device path (default: /dev/sr0)
+    /// Blu-ray device path (auto-detected, defaults to /dev/sr0)
     #[serde(default = "default_device")]
     pub device: String,
 
@@ -94,7 +95,8 @@ impl Default for OptionalToolsConfig {
 }
 
 fn default_device() -> String {
-    "/dev/sr0".to_string()
+    // Try to auto-detect the optical drive, fall back to /dev/sr0
+    crate::paths::detect_optical_drive().unwrap_or_else(|| "/dev/sr0".to_string())
 }
 
 fn default_capacity_gb() -> u64 {
@@ -185,12 +187,31 @@ impl Config {
     }
 
     /// Validate the configuration.
-    pub fn validate(&self) -> Result<()> {
-        // Validate device path if it exists
+    pub fn validate(&mut self) -> Result<()> {
+        // Validate device path - try auto-detection if default doesn't work
         let device_path = Path::new(&self.device);
         if device_path.exists() {
             paths::validate_device(device_path)
-                .with_context(|| format!("Invalid device path: {}", self.device))?;
+                .with_context(|| {
+                    // Suggest auto-detected device if validation fails
+                    let suggestion = paths::detect_optical_drive()
+                        .filter(|d| d != &self.device)
+                        .map(|d| format!("\n\n💡 Suggestion: Use auto-detected drive: {}", d))
+                        .unwrap_or_default();
+                    format!("Invalid device path: {}{}", self.device, suggestion)
+                })?;
+        } else {
+            // Device doesn't exist - try auto-detection
+            if let Some(auto_device) = paths::detect_optical_drive() {
+                info!("Auto-detected optical drive: {} (instead of {})", auto_device, self.device);
+                self.device = auto_device;
+            } else {
+                return Err(anyhow::anyhow!(
+                    "No optical drive found at {} and auto-detection found no drives.\n\
+                     Please ensure you have an optical drive connected and accessible.",
+                    self.device
+                ));
+            }
         }
 
         // Validate staging directory exists or can be created
@@ -219,7 +240,6 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
 
     #[test]
     fn test_default_config() {

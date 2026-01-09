@@ -50,6 +50,11 @@ pub fn generate_manifest_and_sums_with_progress(
 
     info!("Found {} files to process", file_paths.len());
 
+    if let Some(ref mut callback) = progress_callback {
+        let checksum_type = if fast_mode { "CRC32" } else { "SHA256" };
+        callback(&format!("📊 Processing {} files with {} checksums", file_paths.len(), checksum_type));
+    }
+
     // Second pass: process files in parallel
     let files: Vec<FileMetadata> = file_paths
         .into_par_iter()
@@ -60,10 +65,19 @@ pub fn generate_manifest_and_sums_with_progress(
 
     // Send progress updates for each file (not thread-safe, so do it sequentially)
     if let Some(ref mut callback) = progress_callback {
-        for file in &files {
+        for (i, file) in files.iter().enumerate() {
             let checksum_type = if fast_mode { "CRC32" } else { "SHA256" };
-            callback(&format!("Calculated {}: {}", checksum_type, file.rel_path.display()));
+            let _progress_pct = ((i + 1) as f64 / files.len() as f64 * 100.0) as u32;
+
+            // Show progress every 10 files or for large files
+            if i % 10 == 0 || file.size > 100 * 1024 * 1024 {
+                let size_mb = file.size / (1024 * 1024);
+                callback(&format!("🔐 {} {}/{} ({}MB): {}",
+                                 checksum_type, i + 1, files.len(), size_mb,
+                                 file.rel_path.display()));
+            }
         }
+        callback(&format!("✅ Checksum generation complete: {} files processed", files.len()));
     }
 
     info!("Generated manifest with {} files", files.len());

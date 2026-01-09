@@ -412,7 +412,7 @@ mod tests {
     fn test_disc_insert_and_get() -> Result<()> {
         let temp_dir = TempDir::new()?;
         let db_path = temp_dir.path().join("test.db");
-        let conn = init_database(&db_path)?;
+        let mut conn = init_database(&db_path)?;
 
         let disc = Disc {
             disc_id: "2024-BD-001".to_string(),
@@ -427,7 +427,7 @@ mod tests {
             tool_version: None,
         };
 
-        Disc::insert(&conn, &disc)?;
+        Disc::insert(&mut conn, &disc)?;
         let retrieved = Disc::get(&conn, "2024-BD-001")?;
 
         assert!(retrieved.is_some());
