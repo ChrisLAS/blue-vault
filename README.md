@@ -128,23 +128,53 @@ cd bluevault
 nix develop
 ```
 
-#### Option 2: Manual Build (Other Linux Distributions)
+#### Option 2: Automated Build Script
+
+For easier building from source, use the provided build script:
+
+```bash
+git clone https://github.com/ChrisLAS/blue-vault.git
+cd blue-vault
+./build.sh
+```
+
+The script will:
+- Check for required dependencies
+- Build the release binary
+- Optionally create a distribution package with `--package`
+
+#### Option 3: Docker Container
+
+Run BlueVault in a container (requires Docker):
+
+```bash
+# Build the container
+docker build -t bluevault .
+
+# Run with access to optical drive
+docker run --device=/dev/sr0 -v /tmp/bluevault-data:/app/data -it bluevault
+```
+
+#### Option 4: Manual Build (Advanced Users)
 
 1. **Install system dependencies:**
 
 ```bash
 # On Debian/Ubuntu:
-sudo apt install xorriso dvd+rw-tools qrencode rsync
+sudo apt install xorriso growisofs qrencode rsync
 
 # On Fedora/RHEL:
-sudo dnf install xorriso dvd+rw-tools qrencode rsync
+sudo dnf install xorriso growisofs qrencode rsync
+
+# On macOS:
+brew install xorriso growisofs qrencode rsync
 ```
 
 2. **Clone and build:**
 
 ```bash
-git clone <repository-url>
-cd bluevault
+git clone https://github.com/ChrisLAS/blue-vault.git
+cd blue-vault
 cargo build --release
 ```
 
@@ -420,6 +450,34 @@ Key principles:
 - New features should include tests
 - Follow Rust style guidelines
 - Maintain the phosphor theme aesthetic
+
+## Distribution
+
+### Pre-built Binaries
+
+Pre-built binaries for Linux, macOS, and Windows are available from [GitHub Releases](https://github.com/ChrisLAS/blue-vault/releases):
+
+- **Linux x86_64**: Most Linux desktop systems
+- **Linux ARM64**: Raspberry Pi, ARM servers
+- **macOS x86_64**: Intel Mac computers
+- **macOS ARM64**: Apple Silicon (M1/M2/M3) Mac computers
+- **Windows x86_64**: Windows systems
+
+### Installation from Pre-built Binaries
+
+**Linux/macOS:**
+```bash
+# Download the appropriate archive from GitHub Releases
+tar xzf bluevault-linux-x86_64.tar.gz
+sudo mv bdarchive /usr/local/bin/
+sudo chmod +x /usr/local/bin/bdarchive
+```
+
+**Windows:**
+```cmd
+REM Download the zip file from GitHub Releases
+REM Extract and move bdarchive.exe to a directory in your PATH
+```
 
 ## Status
 
