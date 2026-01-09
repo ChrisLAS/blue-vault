@@ -68,7 +68,7 @@ pub enum FooterStatus {
 impl Footer {
     pub fn new() -> Self {
         Self {
-            left_hint: "↑↓/jk: nav  Enter: select  Esc/q: back".to_string(),
+            left_hint: "↑↓/jk: nav  Enter: select  Esc: back  Q: quit".to_string(),
             right_hint: String::new(),
             status: FooterStatus::Ready,
             spinner: None,

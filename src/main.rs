@@ -121,6 +121,11 @@ impl App {
     }
 
     fn handle_key(&mut self, key: KeyCode) -> Result<bool> {
+        // Universal quit key - works from all screens
+        if matches!(key, KeyCode::Char('q') | KeyCode::Char('Q')) {
+            return Ok(false); // false = quit application
+        }
+
         match &mut self.state {
             AppState::Splash(ref mut splash) => {
                 // Skip splash on any keypress
@@ -158,7 +163,7 @@ impl App {
                         return Ok(false);
                     }
                 },
-                KeyCode::Esc | KeyCode::Char('q') => {
+                KeyCode::Esc => {
                     return Ok(false);
                 }
                 _ => {}
