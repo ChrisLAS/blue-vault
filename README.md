@@ -81,7 +81,7 @@ The theme system supports:
 
 **Required:**
 - Linux (tested on NixOS)
-- Rust 1.70+ and Cargo
+- Rust 1.70+ and Cargo (if building from source)
 - `xorriso` - ISO image creation
 - `growisofs` - Blu-ray burning (from `dvd+rw-tools` package)
 - `sha256sum` - Checksum verification (usually pre-installed)
@@ -93,14 +93,43 @@ The theme system supports:
 
 ### Installation
 
-#### Option 1: Using Nix Flake (Recommended for NixOS)
+#### Quick Start with Nix (Recommended for NixOS)
 
-1. **Run directly:**
+If you have Nix installed, the easiest way to get started:
+
+```bash
+# Run directly (no installation needed)
+nix run github:ChrisLAS/blue-vault
+
+# Or enter development environment
+nix develop github:ChrisLAS/blue-vault
+
+# Or build and install to your profile
+nix profile install github:ChrisLAS/blue-vault
+```
+
+#### Other Installation Methods
+
+#### Option 1: Nix Flake (Recommended for Nix Users)
+
+BlueVault provides a complete Nix flake with development environment, dependencies, and packaging:
+
+1. **Run directly (no installation):**
 ```bash
 nix run github:ChrisLAS/blue-vault
 ```
 
-2. **Build and install:**
+2. **Development environment:**
+```bash
+# Enter full development environment with all tools
+nix develop github:ChrisLAS/blue-vault
+
+# Or if you have the repository cloned:
+cd blue-vault
+nix develop
+```
+
+3. **Build and install:**
 ```bash
 # Build the package
 nix build github:ChrisLAS/blue-vault
@@ -108,25 +137,24 @@ nix build github:ChrisLAS/blue-vault
 # Install to your user profile
 nix profile install github:ChrisLAS/blue-vault
 
-# Or if you have the repository cloned:
-cd bluevault
+# Or if cloned:
+cd blue-vault
 nix profile install .
 ```
 
-3. **Add to your system configuration (NixOS):**
+4. **Add to NixOS system configuration:**
 ```nix
 environment.systemPackages = [
   (builtins.getFlake "github:ChrisLAS/blue-vault").packages.${system}.default
 ];
 ```
 
-4. **Development environment:**
-```bash
-nix develop github:ChrisLAS/blue-vault
-# or if cloned:
-cd bluevault
-nix develop
-```
+**What's included:**
+- ✅ Latest Rust toolchain with all extensions
+- ✅ All system dependencies (xorriso, growisofs, etc.)
+- ✅ Development tools (cargo-watch, rust-analyzer, etc.)
+- ✅ Proper PATH setup for runtime dependencies
+- ✅ Isolated build environment
 
 #### Option 2: Automated Build Script
 

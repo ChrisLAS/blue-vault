@@ -1,14 +1,10 @@
 {
-  description = "BlueVault - A TUI application for managing Blu-ray cold storage archives on Linux";
+  description = "BlueVault - Production-ready TUI application for managing Blu-ray cold storage archives";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
-    rust-overlay = {
-      url = "github:oxalica/rust-overlay";
-      inputs.nixpkgs.follows = "nixpkgs";
-      inputs.flake-utils.follows = "flake-utils";
-    };
+    rust-overlay.url = "github:oxalica/rust-overlay";
   };
 
   outputs = { self, nixpkgs, flake-utils, rust-overlay }:
@@ -27,9 +23,9 @@
         # Build the Rust package
         bluevault = pkgs.rustPlatform.buildRustPackage {
           pname = "bdarchive";
-          version = "0.1.0";
+          version = "0.1.2";
           src = ./.;
-          
+
           cargoLock = {
             lockFile = ./Cargo.lock;
           };
@@ -65,10 +61,12 @@
           '';
 
           meta = with pkgs.lib; {
-            description = "BlueVault - A TUI application for managing Blu-ray cold storage archives on Linux";
+            description = "BlueVault - Production-ready TUI application for managing Blu-ray cold storage archives";
             homepage = "https://github.com/ChrisLAS/blue-vault";
+            changelog = "https://github.com/ChrisLAS/blue-vault/blob/main/CHANGELOG.md";
             license = licenses.gpl2Only;
-            maintainers = [ ];
+            maintainers = with maintainers; [ ];
+            mainProgram = "bdarchive";
             platforms = platforms.linux;
           };
         };
