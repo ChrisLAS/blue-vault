@@ -304,16 +304,31 @@ impl App {
                                         }
                                     };
 
-                                    if let Err(_e) = Self::run_disc_creation_background(
+                                    let config_clone = config.clone();
+                                    match Self::run_disc_creation_background(
                                         disc_id,
                                         notes,
                                         source_folders,
                                         dry_run,
-                                        config,
+                                        config_clone,
                                         db_conn,
-                                        tx,
+                                        tx.clone(),
                                     ) {
-                                        // Error already sent via tx in the function
+                                        Ok(()) => {
+                                            // Success - cleanup already handled in the function
+                                        }
+                                        Err(e) => {
+                                            // Failed burn - attempt to cleanup staging directory
+                                            warn!("Disc creation failed: {}", e);
+                                            let _ = tx.send(DiscCreationMessage::Error(format!("Disc creation failed: {}", e)));
+
+                                            if !dry_run {
+                                                // Try to cleanup staging directory even on failure
+                                                if let Ok(staging_dir) = config.staging_dir() {
+                                                    let _ = Self::cleanup_staging_directory(&staging_dir);
+                                                }
+                                            }
+                                        }
                                     }
                                 });
 
@@ -983,6 +998,15 @@ impl App {
             }
         }
 
+        // Clean up staging directory after successful burn
+        if !dry_run {
+            flow.set_status("Cleaning up temporary files...".to_string());
+            if let Err(e) = Self::cleanup_staging_directory(&staging_dir) {
+                warn!("Failed to cleanup staging directory: {}", e);
+                // Don't fail the entire process for cleanup errors
+            }
+        }
+
         // Complete!
         flow.set_processing_state(tui::new_disc::ProcessingState::Complete);
         flow.set_status(format!("Disc {} created successfully!", disc_id));
@@ -1088,6 +1112,21 @@ impl App {
     }
 
     /// Burn directory directly with detailed progress updates
+    /// Clean up the staging directory after successful burn
+    fn cleanup_staging_directory(staging_dir: &Path) -> Result<()> {
+        info!("Cleaning up staging directory: {}", staging_dir.display());
+
+        // Remove the entire staging directory
+        if staging_dir.exists() {
+            std::fs::remove_dir_all(staging_dir)?;
+            info!("Successfully cleaned up staging directory");
+        } else {
+            info!("Staging directory already removed");
+        }
+
+        Ok(())
+    }
+
     /// Calculate the total size of a directory recursively
     fn calculate_directory_size(dir_path: &Path) -> Result<u64> {
         let mut total_size = 0u64;
