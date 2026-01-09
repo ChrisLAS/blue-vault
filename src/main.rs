@@ -434,18 +434,6 @@ impl App {
                             _ => {}
                         }
                     }
-                    KeyCode::Char('d') | KeyCode::Char('D') => {
-                        match flow.current_step() {
-                            tui::new_disc::NewDiscStep::SelectFolders
-                            | tui::new_disc::NewDiscStep::Review => {
-                                // Toggle dry run mode
-                                let current_dry_run = flow.dry_run();
-                                flow.set_dry_run(!current_dry_run);
-                                return Ok(true);
-                            }
-                            _ => {}
-                        }
-                    }
                     KeyCode::Backspace => match flow.current_step() {
                         tui::new_disc::NewDiscStep::EnterDiscId
                         | tui::new_disc::NewDiscStep::EnterNotes => {
@@ -468,11 +456,20 @@ impl App {
                         match flow.current_step() {
                             tui::new_disc::NewDiscStep::EnterDiscId
                             | tui::new_disc::NewDiscStep::EnterNotes => {
+                                // Allow all characters for text input, including 'd'
                                 let mut buffer = flow.input_buffer().to_string();
                                 buffer.push(c);
                                 flow.set_input_buffer(buffer);
                             }
                             tui::new_disc::NewDiscStep::SelectFolders => {
+                                // Handle special keys for SelectFolders step
+                                if c == 'd' || c == 'D' {
+                                    // Toggle dry run mode
+                                    let current_dry_run = flow.dry_run();
+                                    flow.set_dry_run(!current_dry_run);
+                                    return Ok(true);
+                                }
+
                                 // Initialize selector if needed
                                 if flow.directory_selector_mut().is_none() {
                                     if let Err(e) = flow.init_directory_selector() {
@@ -494,6 +491,16 @@ impl App {
                                     }
                                     // Browser mode doesn't use character input (except tab, handled separately)
                                 }
+                            }
+                            tui::new_disc::NewDiscStep::Review => {
+                                // Handle special keys for Review step
+                                if c == 'd' || c == 'D' {
+                                    // Toggle dry run mode
+                                    let current_dry_run = flow.dry_run();
+                                    flow.set_dry_run(!current_dry_run);
+                                    return Ok(true);
+                                }
+                                // Other characters are ignored in review step
                             }
                             _ => {}
                         }
