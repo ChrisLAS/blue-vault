@@ -241,13 +241,18 @@ impl NewDiscFlow {
         }
 
         // Check for control characters
-        if disc_id.chars().any(|c| c.is_control() && c != '\n' && c != '\t') {
+        if disc_id
+            .chars()
+            .any(|c| c.is_control() && c != '\n' && c != '\t')
+        {
             return "Disc ID contains invalid control characters".to_string();
         }
 
         // Check for reserved names (basic check)
-        let reserved_names = ["CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4",
-                             "LPT1", "LPT2", "LPT3", "LPT4"];
+        let reserved_names = [
+            "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "LPT1", "LPT2", "LPT3",
+            "LPT4",
+        ];
         if reserved_names.contains(&disc_id.to_uppercase().as_str()) {
             return "Disc ID uses a reserved system name".to_string();
         }
@@ -302,15 +307,13 @@ impl NewDiscFlow {
                 let instructions = if validation_msg.is_empty() {
                     "Type to customize, [Enter] Accept, [Esc] Cancel".to_string()
                 } else {
-                    format!("❌ {} - [Enter] Use default '{}', [Esc] Cancel", validation_msg, self.disc_id)
+                    format!(
+                        "❌ {} - [Enter] Use default '{}', [Esc] Cancel",
+                        validation_msg, self.disc_id
+                    )
                 };
 
-                let text = format!(
-                    "{} {}\n\n{}",
-                    id_label,
-                    display_id,
-                    instructions
-                );
+                let text = format!("{} {}\n\n{}", id_label, display_id, instructions);
                 let para = Paragraph::new(text)
                     .block(block)
                     .style(if validation_msg.is_empty() {

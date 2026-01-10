@@ -102,7 +102,8 @@ pub fn detect_optical_drive() -> Option<String> {
     }
 
     // Method 2: Scan /dev/sr* devices (most common on modern Linux)
-    for i in 0..10 {  // Check sr0 through sr9
+    for i in 0..10 {
+        // Check sr0 through sr9
         let device_path = format!("/dev/sr{}", i);
         let path = PathBuf::from(&device_path);
         if validate_device_quiet(&path).is_ok() {
@@ -117,7 +118,7 @@ pub fn detect_optical_drive() -> Option<String> {
         "/dev/bluray",
         "/dev/sr",
         "/dev/scd0",
-        "/dev/hdc",  // Older IDE drives
+        "/dev/hdc", // Older IDE drives
         "/dev/hdd",
     ];
 
@@ -164,7 +165,10 @@ pub fn validate_device(path: &Path) -> Result<()> {
         // Suggest auto-detection if the default device doesn't exist
         let suggestion = if path.to_string_lossy() == "/dev/sr0" {
             if let Some(auto_detected) = detect_optical_drive() {
-                format!("\n\n💡 Suggestion: Use auto-detected drive: {}", auto_detected)
+                format!(
+                    "\n\n💡 Suggestion: Use auto-detected drive: {}",
+                    auto_detected
+                )
             } else {
                 "\n\n💡 No optical drives detected on this system.".to_string()
             }
