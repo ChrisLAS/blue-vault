@@ -12,6 +12,7 @@ pub enum MainMenuAction {
     ListDiscs,
     Settings,
     Logs,
+    Cleanup,
     Quit,
 }
 
@@ -37,7 +38,7 @@ impl MainMenu {
 
     pub fn previous(&mut self) {
         if self.selected == 0 {
-            self.selected = 6;
+            self.selected = 7;
         } else {
             self.selected -= 1;
         }
@@ -51,7 +52,8 @@ impl MainMenu {
             3 => MainMenuAction::ListDiscs,
             4 => MainMenuAction::Settings,
             5 => MainMenuAction::Logs,
-            6 => MainMenuAction::Quit,
+            6 => MainMenuAction::Cleanup,
+            7 => MainMenuAction::Quit,
             _ => MainMenuAction::Quit,
         }
     }
@@ -64,6 +66,7 @@ impl MainMenu {
             ListItem::new("List Discs"),
             ListItem::new("Settings"),
             ListItem::new("Logs / Recent Runs"),
+            ListItem::new("🧹 Cleanup Temporary Files"),
             ListItem::new("Quit"),
         ];
 

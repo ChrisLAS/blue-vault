@@ -1,10 +1,12 @@
 use crate::theme::Theme;
+use crate::config::Config;
 use crate::tui::directory_selector;
 use ratatui::{
     prelude::*,
     widgets::{Block, Borders, Gauge, Paragraph},
 };
 use std::path::PathBuf;
+use crate::staging;
 
 #[derive(Debug)]
 pub struct NewDiscFlow {
@@ -22,6 +24,14 @@ pub struct NewDiscFlow {
     dry_run: bool,
     /// Current file being processed (for progress display)
     file_progress: String,
+    /// Total size of selected files (calculated for capacity check)
+    total_size_bytes: Option<u64>,
+    /// Whether content exceeds disc capacity
+    exceeds_capacity: bool,
+    /// Multi-disc progress tracking
+    multi_disc_current: Option<u32>, // Current disc being processed (1-based)
+    multi_disc_total: Option<u32>,   // Total number of discs
+    multi_disc_overall_progress: f64, // Overall progress 0.0-1.0
 }
 
 #[derive(Debug)]
@@ -60,6 +70,11 @@ impl Default for NewDiscFlow {
             directory_selector: None,
             dry_run: false,
             file_progress: String::new(),
+            total_size_bytes: None,
+            exceeds_capacity: false,
+            multi_disc_current: None,
+            multi_disc_total: None,
+            multi_disc_overall_progress: 0.0,
         }
     }
 }
@@ -78,6 +93,11 @@ impl NewDiscFlow {
             directory_selector: None,
             dry_run: false,
             file_progress: String::new(),
+            total_size_bytes: None,
+            exceeds_capacity: false,
+            multi_disc_current: None,
+            multi_disc_total: None,
+            multi_disc_overall_progress: 0.0,
         }
     }
 
@@ -162,7 +182,7 @@ impl NewDiscFlow {
         self.input_buffer.clear();
     }
 
-    pub fn next_step(&mut self) {
+    pub fn next_step(&mut self, config: &crate::config::Config) -> anyhow::Result<()> {
         if self.current_step == NewDiscStep::EnterDiscId && !self.input_buffer.is_empty() {
             self.commit_input();
         }
@@ -174,10 +194,15 @@ impl NewDiscFlow {
                 let _ = self.init_directory_selector();
                 NewDiscStep::SelectFolders
             }
-            NewDiscStep::SelectFolders => NewDiscStep::Review,
+            NewDiscStep::SelectFolders => {
+                // Calculate capacity when entering Review step
+                self.calculate_capacity_check(config)?;
+                NewDiscStep::Review
+            }
             NewDiscStep::Review => NewDiscStep::Processing,
             NewDiscStep::Processing => NewDiscStep::Processing,
         };
+        Ok(())
     }
 
     pub fn previous_step(&mut self) {
@@ -215,6 +240,37 @@ impl NewDiscFlow {
 
     pub fn set_file_progress(&mut self, progress: String) {
         self.file_progress = progress;
+    }
+
+    /// Set multi-disc progress information
+    pub fn set_multi_disc_progress(&mut self, current: u32, total: u32, overall_progress: f64) {
+        self.multi_disc_current = Some(current);
+        self.multi_disc_total = Some(total);
+        self.multi_disc_overall_progress = overall_progress.clamp(0.0, 1.0);
+    }
+
+    /// Clear multi-disc progress (for single disc operations)
+    pub fn clear_multi_disc_progress(&mut self) {
+        self.multi_disc_current = None;
+        self.multi_disc_total = None;
+        self.multi_disc_overall_progress = 0.0;
+    }
+
+    /// Check if this is a multi-disc operation
+    pub fn is_multi_disc(&self) -> bool {
+        self.multi_disc_total.is_some()
+    }
+
+    /// Calculate total size and check capacity against configured disc size
+    pub fn calculate_capacity_check(&mut self, config: &crate::config::Config) -> anyhow::Result<()> {
+        let capacity_bytes = config.default_capacity_bytes();
+
+        let (total_size, exceeds) = staging::check_capacity(&self.source_folders, capacity_bytes)?;
+
+        self.total_size_bytes = Some(total_size);
+        self.exceeds_capacity = exceeds;
+
+        Ok(())
     }
 
     pub fn set_status(&mut self, message: String) {
@@ -267,7 +323,7 @@ impl NewDiscFlow {
         self.processing_state = ProcessingState::Idle;
     }
 
-    pub fn render(&mut self, theme: &Theme, frame: &mut Frame, area: Rect) {
+    pub fn render(&mut self, theme: &Theme, config: &Config, frame: &mut Frame, area: Rect) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Min(5), Constraint::Length(3)])
@@ -415,13 +471,46 @@ impl NewDiscFlow {
                 } else {
                     "ACTUAL BURN"
                 };
-                let text = format!(
-                    "Review:\n\nDisc ID: {}\nNotes: {}\n\nSource Folders:\n  {}\n\nMode: {}\n\n[Enter] Start, [D] Toggle Dry Run, [Esc] Back",
+                let mut text = format!(
+                    "Review:\n\nDisc ID: {}\nNotes: {}\n\nSource Folders:\n  {}\n\nMode: {}",
                     self.disc_id,
                     if self.notes.is_empty() { "(none)" } else { &self.notes },
                     if folders_list.is_empty() { "(none)" } else { &folders_list },
                     mode
                 );
+
+                // Add capacity information if calculated
+                if let Some(total_size) = self.total_size_bytes {
+                    let size_gb = total_size as f64 / (1024.0 * 1024.0 * 1024.0);
+                    let capacity_gb = config.default_capacity_bytes() as f64 / (1024.0 * 1024.0 * 1024.0);
+                    text.push_str(&format!("\n\nTotal Size: {:.2} GB", size_gb));
+                    text.push_str(&format!("Disc Capacity: {:.0} GB", capacity_gb));
+
+                    if self.exceeds_capacity {
+                        // Actually plan the discs to show the user what will happen
+                        match staging::plan_disc_layout(&self.source_folders, config.default_capacity_bytes()) {
+                            Ok(plans) => {
+                                let num_discs = plans.len();
+                                text.push_str(&format!("\n\n💿 MULTI-DISC ARCHIVE: {} discs required", num_discs));
+                                text.push_str("\n   Archive will be split across multiple Blu-rays");
+
+                                // Show basic info about each disc
+                                for (i, plan) in plans.iter().enumerate() {
+                                    let disc_size_gb = plan.used_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+                                    let disc_num = i + 1;
+                                    text.push_str(&format!("\n     Disc {}: {:.1} GB ({} files)", disc_num, disc_size_gb, plan.entries.len()));
+                                }
+                            }
+                            Err(e) => {
+                                text.push_str(&format!("\n\n⚠️  Cannot plan multi-disc layout: {}", e));
+                            }
+                        }
+                    } else {
+                        text.push_str("\n\n✅ Content fits on single disc");
+                    }
+                }
+
+                text.push_str("\n\n[Enter] Start, [D] Toggle Dry Run, [Esc] Back");
                 let para = Paragraph::new(text)
                     .block(block)
                     .style(theme.primary_style());
@@ -451,7 +540,7 @@ impl NewDiscFlow {
                     ])
                     .split(chunks[0]);
 
-                let base_text = if self.file_progress.is_empty() {
+                let mut base_text = if self.file_progress.is_empty() {
                     format!("Status: {}\n\n{}", status, self.status_message)
                 } else {
                     format!(
@@ -459,6 +548,26 @@ impl NewDiscFlow {
                         status, self.status_message, self.file_progress
                     )
                 };
+
+                // Add multi-disc progress information if available
+                if let (Some(current), Some(total)) = (self.multi_disc_current, self.multi_disc_total) {
+                    let progress_percent = (self.multi_disc_overall_progress * 100.0) as u32;
+                    base_text.push_str(&format!(
+                        "\n\n🔥 Multi-Disc Progress: {}/{} discs complete",
+                        current.saturating_sub(1), total
+                    ));
+                    base_text.push_str(&format!(
+                        "\n📊 Overall Progress: {}%",
+                        progress_percent
+                    ));
+
+                    // Add a retro-style progress bar
+                    let bar_width = 20;
+                    let filled = ((self.multi_disc_overall_progress * bar_width as f64) as usize).min(bar_width);
+                    let _empty = bar_width - filled;
+                    let progress_bar = format!("▰{:▱<width$}▰", "", width = filled);
+                    base_text.push_str(&format!("\n[{}]", progress_bar));
+                }
 
                 let text = if matches!(self.processing_state, ProcessingState::Complete) {
                     format!("{}\n\n[Esc] Return to Main Menu", base_text)
