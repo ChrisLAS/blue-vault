@@ -108,7 +108,9 @@ impl App {
                     Err(mpsc::TryRecvError::Disconnected) => {
                         // Background thread died unexpectedly
                         if let AppState::NewDisc(ref mut flow) = self.state {
-                            flow.set_error("Background process terminated unexpectedly".to_string());
+                            flow.set_error(
+                                "Background process terminated unexpectedly".to_string(),
+                            );
                             self.disc_creation_rx = None;
                             updated = true;
                         }
@@ -173,10 +175,16 @@ impl App {
                     KeyCode::Esc => {
                         if flow.current_step() == tui::new_disc::NewDiscStep::Processing {
                             // Check if processing is complete - allow escape then
-                            if matches!(flow.processing_state(), tui::new_disc::ProcessingState::Complete) {
+                            if matches!(
+                                flow.processing_state(),
+                                tui::new_disc::ProcessingState::Complete
+                            ) {
                                 self.state = AppState::MainMenu;
                                 return Ok(true);
-                            } else if matches!(flow.processing_state(), tui::new_disc::ProcessingState::Error(_)) {
+                            } else if matches!(
+                                flow.processing_state(),
+                                tui::new_disc::ProcessingState::Error(_)
+                            ) {
                                 // Allow escape on error too - go back to review
                                 flow.previous_step();
                                 flow.clear_error();
@@ -320,12 +328,17 @@ impl App {
                                         Err(e) => {
                                             // Failed burn - attempt to cleanup staging directory
                                             warn!("Disc creation failed: {}", e);
-                                            let _ = tx.send(DiscCreationMessage::Error(format!("Disc creation failed: {}", e)));
+                                            let _ = tx.send(DiscCreationMessage::Error(format!(
+                                                "Disc creation failed: {}",
+                                                e
+                                            )));
 
                                             if !dry_run {
                                                 // Try to cleanup staging directory even on failure
                                                 if let Ok(staging_dir) = config.staging_dir() {
-                                                    let _ = Self::cleanup_staging_directory(&staging_dir);
+                                                    let _ = Self::cleanup_staging_directory(
+                                                        &staging_dir,
+                                                    );
                                                 }
                                             }
                                         }
@@ -1041,7 +1054,9 @@ impl App {
         use std::time::Duration;
 
         if dry_run {
-            let _ = tx.send(DiscCreationMessage::Progress("DRY RUN: Would burn ISO to disc".to_string()));
+            let _ = tx.send(DiscCreationMessage::Progress(
+                "DRY RUN: Would burn ISO to disc".to_string(),
+            ));
             thread::sleep(Duration::from_millis(500));
             return Ok(());
         }
@@ -1061,11 +1076,16 @@ impl App {
         };
 
         // Phase 1: Initializing burn
-        let _ = tx.send(DiscCreationMessage::Progress("🔥 Initializing Blu-ray burner...".to_string()));
+        let _ = tx.send(DiscCreationMessage::Progress(
+            "🔥 Initializing Blu-ray burner...".to_string(),
+        ));
         thread::sleep(Duration::from_millis(500));
 
         // Phase 2: Starting data transfer with size info
-        let _ = tx.send(DiscCreationMessage::Progress(format!("💿 Starting data transfer ({}GB) to disc...", iso_size_gb)));
+        let _ = tx.send(DiscCreationMessage::Progress(format!(
+            "💿 Starting data transfer ({}GB) to disc...",
+            iso_size_gb
+        )));
         thread::sleep(Duration::from_millis(500));
 
         // Start progress monitoring thread
@@ -1087,16 +1107,20 @@ impl App {
                 if burn_progress != last_progress && burn_progress < 95 {
                     let speed_mbs = if elapsed > 0.0 {
                         (iso_size as f64 / elapsed / 1_000_000.0) as u32
-                    } else { 0 };
+                    } else {
+                        0
+                    };
 
                     let eta_mins = if progress_ratio > 0.0 {
                         ((1.0 - progress_ratio) * estimated_burn_time_secs / 60.0) as u32
-                    } else { 0 };
+                    } else {
+                        0
+                    };
 
-                    let _ = progress_tx.send(DiscCreationMessage::Progress(
-                        format!("🔥 Burning... {}MB/s | {}min remaining | {}% complete",
-                               speed_mbs, eta_mins, burn_progress)
-                    ));
+                    let _ = progress_tx.send(DiscCreationMessage::Progress(format!(
+                        "🔥 Burning... {}MB/s | {}min remaining | {}% complete",
+                        speed_mbs, eta_mins, burn_progress
+                    )));
                     last_progress = burn_progress;
                 }
 
@@ -1110,12 +1134,15 @@ impl App {
                 let burn_duration = start_time.elapsed();
                 let actual_speed = if burn_duration.as_secs_f64() > 0.0 {
                     (iso_size as f64 / burn_duration.as_secs_f64() / 1_000_000.0) as u32
-                } else { 0 };
+                } else {
+                    0
+                };
 
-                let _ = tx.send(DiscCreationMessage::Progress(
-                    format!("✅ Burn completed! {:.1}s | {}MB/s average speed",
-                           burn_duration.as_secs_f64(), actual_speed)
-                ));
+                let _ = tx.send(DiscCreationMessage::Progress(format!(
+                    "✅ Burn completed! {:.1}s | {}MB/s average speed",
+                    burn_duration.as_secs_f64(),
+                    actual_speed
+                )));
                 thread::sleep(Duration::from_millis(500));
                 Ok(())
             }
@@ -1176,7 +1203,9 @@ impl App {
         use std::time::Duration;
 
         if dry_run {
-            let _ = tx.send(DiscCreationMessage::Progress("DRY RUN: Would burn directory directly to disc".to_string()));
+            let _ = tx.send(DiscCreationMessage::Progress(
+                "DRY RUN: Would burn directory directly to disc".to_string(),
+            ));
             thread::sleep(Duration::from_millis(500));
             return Ok(());
         }
@@ -1193,11 +1222,16 @@ impl App {
         };
 
         // Phase 1: Initializing burn
-        let _ = tx.send(DiscCreationMessage::Progress("🔥 Initializing Blu-ray burner...".to_string()));
+        let _ = tx.send(DiscCreationMessage::Progress(
+            "🔥 Initializing Blu-ray burner...".to_string(),
+        ));
         thread::sleep(Duration::from_millis(500));
 
         // Phase 2: Starting data transfer with size info
-        let _ = tx.send(DiscCreationMessage::Progress(format!("💿 Starting direct data transfer ({}GB) to disc...", dir_size_gb)));
+        let _ = tx.send(DiscCreationMessage::Progress(format!(
+            "💿 Starting direct data transfer ({}GB) to disc...",
+            dir_size_gb
+        )));
         thread::sleep(Duration::from_millis(500));
 
         // Start progress monitoring thread
@@ -1219,16 +1253,20 @@ impl App {
                 if burn_progress != last_progress && burn_progress < 95 {
                     let speed_mbs = if elapsed > 0.0 {
                         (dir_size as f64 / elapsed / 1_000_000.0) as u32
-                    } else { 0 };
+                    } else {
+                        0
+                    };
 
                     let eta_mins = if progress_ratio > 0.0 {
                         ((1.0 - progress_ratio) * estimated_burn_time_secs / 60.0) as u32
-                    } else { 0 };
+                    } else {
+                        0
+                    };
 
-                    let _ = progress_tx.send(DiscCreationMessage::Progress(
-                        format!("🔥 Burning... {}MB/s | {}min remaining | {}% complete",
-                               speed_mbs, eta_mins, burn_progress)
-                    ));
+                    let _ = progress_tx.send(DiscCreationMessage::Progress(format!(
+                        "🔥 Burning... {}MB/s | {}min remaining | {}% complete",
+                        speed_mbs, eta_mins, burn_progress
+                    )));
                     last_progress = burn_progress;
                 }
 
@@ -1242,18 +1280,24 @@ impl App {
                 let burn_duration = start_time.elapsed();
                 let actual_speed = if burn_duration.as_secs_f64() > 0.0 {
                     (dir_size as f64 / burn_duration.as_secs_f64() / 1_000_000.0) as u32
-                } else { 0 };
+                } else {
+                    0
+                };
 
-                let _ = tx.send(DiscCreationMessage::Progress(
-                    format!("✅ Direct burn completed! {:.1}s | {}MB/s average speed",
-                           burn_duration.as_secs_f64(), actual_speed)
-                ));
+                let _ = tx.send(DiscCreationMessage::Progress(format!(
+                    "✅ Direct burn completed! {:.1}s | {}MB/s average speed",
+                    burn_duration.as_secs_f64(),
+                    actual_speed
+                )));
                 thread::sleep(Duration::from_millis(500));
                 Ok(())
             }
             Err(e) => {
                 error!("Direct burn failed: {}", e);
-                let _ = tx.send(DiscCreationMessage::Error(format!("Direct burn failed: {}", e)));
+                let _ = tx.send(DiscCreationMessage::Error(format!(
+                    "Direct burn failed: {}",
+                    e
+                )));
                 Err(anyhow::anyhow!("Direct burn failed: {}", e))
             }
         }
@@ -1272,24 +1316,31 @@ impl App {
     ) -> Result<()> {
         let created_at = format_timestamp_now();
 
-        let source_roots_json = serde_json::to_string(source_roots)
-            .context("Failed to serialize source roots")?;
+        let source_roots_json =
+            serde_json::to_string(source_roots).context("Failed to serialize source roots")?;
 
         let disc_record = database::Disc {
             disc_id: disc_id.to_string(),
             volume_label: volume_label.to_string(),
             created_at: created_at.clone(),
-            notes: if notes.is_empty() { None } else { Some(notes.to_string()) },
+            notes: if notes.is_empty() {
+                None
+            } else {
+                Some(notes.to_string())
+            },
             iso_size: Some(iso_size),
-            burn_device: if dry_run { None } else { Some(device.to_string()) },
+            burn_device: if dry_run {
+                None
+            } else {
+                Some(device.to_string())
+            },
             checksum_manifest_hash: None,
             qr_path: None,
             source_roots: Some(source_roots_json),
             tool_version: Some(disc::get_tool_version()),
         };
 
-        database::Disc::insert(db_conn, &disc_record)
-            .context("Failed to insert disc record")?;
+        database::Disc::insert(db_conn, &disc_record).context("Failed to insert disc record")?;
 
         Ok(())
     }
@@ -1394,7 +1445,7 @@ impl App {
             &source_folders,
             use_rsync,
             dry_run,
-            Some(Box::new(staging_progress_callback))
+            Some(Box::new(staging_progress_callback)),
         )?;
         let _ = tx.send(DiscCreationMessage::StateAndStatus(
             tui::new_disc::ProcessingState::Staging,
@@ -1417,7 +1468,7 @@ impl App {
             &disc_root,
             None,
             Some(Box::new(progress_callback)),
-            true // fast_mode = true (uses CRC32 instead of SHA256)
+            true, // fast_mode = true (uses CRC32 instead of SHA256)
         )?;
 
         // Write manifest files
@@ -1426,7 +1477,10 @@ impl App {
             Ok(_) => info!("Manifest file written successfully"),
             Err(e) => {
                 error!("Failed to write manifest file: {}", e);
-                let _ = tx.send(DiscCreationMessage::Error(format!("Failed to write manifest: {}", e)));
+                let _ = tx.send(DiscCreationMessage::Error(format!(
+                    "Failed to write manifest: {}",
+                    e
+                )));
                 return Err(anyhow::anyhow!("Failed to write manifest file: {}", e));
             }
         }
@@ -1436,7 +1490,10 @@ impl App {
             Ok(_) => info!("SHA256SUMS file written successfully"),
             Err(e) => {
                 error!("Failed to write SHA256SUMS file: {}", e);
-                let _ = tx.send(DiscCreationMessage::Error(format!("Failed to write checksums: {}", e)));
+                let _ = tx.send(DiscCreationMessage::Error(format!(
+                    "Failed to write checksums: {}",
+                    e
+                )));
                 return Err(anyhow::anyhow!("Failed to write SHA256SUMS file: {}", e));
             }
         }
@@ -1453,7 +1510,10 @@ impl App {
             Ok(_) => info!("Disc info written successfully"),
             Err(e) => {
                 error!("Failed to write disc info: {}", e);
-                let _ = tx.send(DiscCreationMessage::Error(format!("Failed to write disc info: {}", e)));
+                let _ = tx.send(DiscCreationMessage::Error(format!(
+                    "Failed to write disc info: {}",
+                    e
+                )));
                 return Err(anyhow::anyhow!("Failed to write disc info: {}", e));
             }
         }
@@ -1471,7 +1531,11 @@ impl App {
             let _ = tx.send(DiscCreationMessage::Error(error_msg.clone()));
             return Err(anyhow::anyhow!("{}", error_msg));
         }
-        info!("Capacity check passed: {:.2} GB / {:.2} GB", total_size as f64 / 1_000_000_000.0, capacity as f64 / 1_000_000_000.0);
+        info!(
+            "Capacity check passed: {:.2} GB / {:.2} GB",
+            total_size as f64 / 1_000_000_000.0,
+            capacity as f64 / 1_000_000_000.0
+        );
 
         // Step 4: Create ISO (skip if using direct burn and not dry run)
         let volume_label = disc::generate_volume_label(&disc_id);
@@ -1483,7 +1547,10 @@ impl App {
             iso_size = manifest::calculate_total_size(&files); // Use directory size
             let _ = tx.send(DiscCreationMessage::StateAndStatus(
                 tui::new_disc::ProcessingState::CreatingISO,
-                format!("Direct burn - skipping ISO creation ({:.2} GB)", iso_size as f64 / 1_000_000_000.0),
+                format!(
+                    "Direct burn - skipping ISO creation ({:.2} GB)",
+                    iso_size as f64 / 1_000_000_000.0
+                ),
             ));
         } else {
             let _ = tx.send(DiscCreationMessage::StateAndStatus(
@@ -1502,14 +1569,20 @@ impl App {
                         }
                         Err(e) => {
                             error!("Failed to get ISO size after creation: {}", e);
-                            let _ = tx.send(DiscCreationMessage::Error(format!("Failed to verify ISO size: {}", e)));
+                            let _ = tx.send(DiscCreationMessage::Error(format!(
+                                "Failed to verify ISO size: {}",
+                                e
+                            )));
                             return Err(anyhow::anyhow!("Failed to get ISO size: {}", e));
                         }
                     }
                 }
                 Err(e) => {
                     error!("ISO creation failed: {}", e);
-                    let _ = tx.send(DiscCreationMessage::Error(format!("ISO creation failed: {}", e)));
+                    let _ = tx.send(DiscCreationMessage::Error(format!(
+                        "ISO creation failed: {}",
+                        e
+                    )));
                     return Err(anyhow::anyhow!("ISO creation failed: {}", e));
                 }
             }
@@ -1536,21 +1609,25 @@ impl App {
                 let volume_label = disc::generate_volume_label(&disc_id);
                 info!("Creating ISO for dry run at: {}", iso_path.display());
                 match iso::create_iso(&disc_root, &iso_path, &volume_label, false) {
-                    Ok(_) => {
-                        match iso::get_iso_size(&iso_path) {
-                            Ok(_) => {
-                                info!("Dry run ISO created successfully");
-                            }
-                            Err(e) => {
-                                error!("Failed to get dry run ISO size: {}", e);
-                                let _ = tx.send(DiscCreationMessage::Error(format!("Failed to verify dry run ISO: {}", e)));
-                                return Err(anyhow::anyhow!("Failed to get dry run ISO size: {}", e));
-                            }
+                    Ok(_) => match iso::get_iso_size(&iso_path) {
+                        Ok(_) => {
+                            info!("Dry run ISO created successfully");
                         }
-                    }
+                        Err(e) => {
+                            error!("Failed to get dry run ISO size: {}", e);
+                            let _ = tx.send(DiscCreationMessage::Error(format!(
+                                "Failed to verify dry run ISO: {}",
+                                e
+                            )));
+                            return Err(anyhow::anyhow!("Failed to get dry run ISO size: {}", e));
+                        }
+                    },
                     Err(e) => {
                         error!("Dry run ISO creation failed: {}", e);
-                        let _ = tx.send(DiscCreationMessage::Error(format!("Dry run ISO creation failed: {}", e)));
+                        let _ = tx.send(DiscCreationMessage::Error(format!(
+                            "Dry run ISO creation failed: {}",
+                            e
+                        )));
                         return Err(anyhow::anyhow!("Dry run ISO creation failed: {}", e));
                     }
                 }
@@ -1570,7 +1647,12 @@ impl App {
             match config.burn.method.as_str() {
                 "direct" => {
                     // Burn the staging directory directly (no ISO needed)
-                    Self::burn_direct_with_progress(&disc_root, &config.device, dry_run, tx.clone())?;
+                    Self::burn_direct_with_progress(
+                        &disc_root,
+                        &config.device,
+                        dry_run,
+                        tx.clone(),
+                    )?;
                 }
                 "iso" | _ => {
                     // Default: create and burn ISO
@@ -1589,7 +1671,16 @@ impl App {
             "Updating index...".to_string(),
         ));
 
-        match Self::index_disc_in_database(&mut db_conn, &disc_id, &volume_label, &notes, iso_size, &config.device, dry_run, &source_roots) {
+        match Self::index_disc_in_database(
+            &mut db_conn,
+            &disc_id,
+            &volume_label,
+            &notes,
+            iso_size,
+            &config.device,
+            dry_run,
+            &source_roots,
+        ) {
             Ok(_) => {
                 let _ = tx.send(DiscCreationMessage::StateAndStatus(
                     tui::new_disc::ProcessingState::Indexing,
@@ -1598,18 +1689,26 @@ impl App {
             }
             Err(e) => {
                 error!("Database indexing failed: {}", e);
-                let _ = tx.send(DiscCreationMessage::Error(format!("Database indexing failed: {}", e)));
+                let _ = tx.send(DiscCreationMessage::Error(format!(
+                    "Database indexing failed: {}",
+                    e
+                )));
                 return Err(anyhow::anyhow!("Database indexing failed: {}", e));
             }
         }
 
         match Self::index_files_in_database(&mut db_conn, &disc_id, &files) {
             Ok(_) => {
-                let _ = tx.send(DiscCreationMessage::Progress("Files indexed in database".to_string()));
+                let _ = tx.send(DiscCreationMessage::Progress(
+                    "Files indexed in database".to_string(),
+                ));
             }
             Err(e) => {
                 error!("File indexing failed: {}", e);
-                let _ = tx.send(DiscCreationMessage::Error(format!("File indexing failed: {}", e)));
+                let _ = tx.send(DiscCreationMessage::Error(format!(
+                    "File indexing failed: {}",
+                    e
+                )));
                 return Err(anyhow::anyhow!("File indexing failed: {}", e));
             }
         }
@@ -1634,7 +1733,9 @@ impl App {
                 }
             }
         } else {
-            let _ = tx.send(DiscCreationMessage::Status("QR code generation disabled".to_string()));
+            let _ = tx.send(DiscCreationMessage::Status(
+                "QR code generation disabled".to_string(),
+            ));
         }
 
         let _ = tx.send(DiscCreationMessage::Complete);
@@ -1642,20 +1743,11 @@ impl App {
     }
 
     /// Safely generate QR code with proper error handling
-    fn generate_qr_code_safely(
-        _config: &Config,
-        disc_id: &str,
-        dry_run: bool,
-    ) -> Result<()> {
-        let qrcodes_dir = paths::qrcodes_dir()
-            .context("Failed to get QR codes directory")?;
+    fn generate_qr_code_safely(_config: &Config, disc_id: &str, dry_run: bool) -> Result<()> {
+        let qrcodes_dir = paths::qrcodes_dir().context("Failed to get QR codes directory")?;
 
-        qrcode::generate_qrcode(
-            disc_id,
-            &qrcodes_dir,
-            qrcode::QrCodeFormat::PNG,
-            dry_run,
-        ).context("QR code generation failed")?;
+        qrcode::generate_qrcode(disc_id, &qrcodes_dir, qrcode::QrCodeFormat::PNG, dry_run)
+            .context("QR code generation failed")?;
 
         Ok(())
     }
@@ -1775,8 +1867,8 @@ fn main() -> Result<()> {
         }
 
         // Check for background messages first (always poll these)
-        let has_background_task = matches!(app.state, AppState::NewDisc(_))
-            && app.disc_creation_rx.is_some();
+        let has_background_task =
+            matches!(app.state, AppState::NewDisc(_)) && app.disc_creation_rx.is_some();
 
         let background_updated = if has_background_task {
             app.poll_background_messages()

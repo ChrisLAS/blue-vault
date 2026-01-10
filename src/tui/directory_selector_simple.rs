@@ -401,7 +401,8 @@ impl DirectorySelector {
         let async_completed = self.check_async_loading();
 
         // Start loading if needed and not already loading
-        let started_loading = if self.entries.is_empty() && self.loading_state == LoadingState::Idle {
+        let started_loading = if self.entries.is_empty() && self.loading_state == LoadingState::Idle
+        {
             self.ensure_entries_loaded().unwrap_or(false)
         } else {
             false
@@ -613,7 +614,10 @@ fn load_directory_entries_sync(current_dir: PathBuf) -> LoadingResult {
                     }
                 }
             }
-            LoadingResult { entries, error: None }
+            LoadingResult {
+                entries,
+                error: None,
+            }
         }
         Err(e) => LoadingResult {
             entries: Vec::new(),

@@ -108,7 +108,7 @@ fn default_true() -> bool {
 }
 
 fn default_burn_method() -> String {
-    "direct".to_string()  // Default to direct method for space efficiency
+    "direct".to_string() // Default to direct method for space efficiency
 }
 
 impl Default for Config {
@@ -191,19 +191,21 @@ impl Config {
         // Validate device path - try auto-detection if default doesn't work
         let device_path = Path::new(&self.device);
         if device_path.exists() {
-            paths::validate_device(device_path)
-                .with_context(|| {
-                    // Suggest auto-detected device if validation fails
-                    let suggestion = paths::detect_optical_drive()
-                        .filter(|d| d != &self.device)
-                        .map(|d| format!("\n\n💡 Suggestion: Use auto-detected drive: {}", d))
-                        .unwrap_or_default();
-                    format!("Invalid device path: {}{}", self.device, suggestion)
-                })?;
+            paths::validate_device(device_path).with_context(|| {
+                // Suggest auto-detected device if validation fails
+                let suggestion = paths::detect_optical_drive()
+                    .filter(|d| d != &self.device)
+                    .map(|d| format!("\n\n💡 Suggestion: Use auto-detected drive: {}", d))
+                    .unwrap_or_default();
+                format!("Invalid device path: {}{}", self.device, suggestion)
+            })?;
         } else {
             // Device doesn't exist - try auto-detection
             if let Some(auto_device) = paths::detect_optical_drive() {
-                info!("Auto-detected optical drive: {} (instead of {})", auto_device, self.device);
+                info!(
+                    "Auto-detected optical drive: {} (instead of {})",
+                    auto_device, self.device
+                );
                 self.device = auto_device;
             } else {
                 return Err(anyhow::anyhow!(
