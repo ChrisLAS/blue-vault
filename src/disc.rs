@@ -67,6 +67,62 @@ pub fn generate_volume_label(disc_id: &str) -> String {
     disc_id.to_uppercase().replace("-", "_")
 }
 
+/// Generate volume label for multi-disc sets.
+/// Ensures labels fit within filesystem constraints (typically 32 chars max).
+pub fn generate_multi_disc_volume_label(base_id: &str, sequence_num: u32, total_discs: u32) -> String {
+    // For multi-disc sets, create labels like: "BDARCHIVE_2024_001_OF_003"
+    // This clearly shows the disc position and total count
+
+    // Extract year from base_id if it's in the format "YYYY-BD-XXX"
+    let year_part = if base_id.len() >= 4 && base_id.chars().take(4).all(|c| c.is_ascii_digit()) {
+        format!("_{}", &base_id[0..4])
+    } else {
+        String::new()
+    };
+
+    let label = format!("BDARCHIVE{}D{:03}_OF_{:03}", year_part, sequence_num, total_discs);
+
+    // Ensure it fits within typical filesystem limits (32 chars is common)
+    if label.len() > 32 {
+        // Fallback to shorter format if needed
+        format!("BD{}_{:02}_{:02}", &base_id[0..4], sequence_num, total_discs)
+    } else {
+        label
+    }
+}
+
+/// Generate disc ID for a specific sequence in a multi-disc set.
+/// For multi-disc sets, generates IDs like "2024-BD-ARCHIVE-001", "2024-BD-ARCHIVE-002", etc.
+pub fn generate_multi_disc_id(base_id: &str, sequence_num: u32) -> String {
+    format!("{}-{:03}", base_id, sequence_num)
+}
+
+/// Validate that a disc ID is valid for use in filenames and volume labels.
+pub fn validate_disc_id(disc_id: &str) -> Result<(), String> {
+    if disc_id.is_empty() {
+        return Err("Disc ID cannot be empty".to_string());
+    }
+
+    if disc_id.len() > 50 {
+        return Err("Disc ID too long (max 50 characters)".to_string());
+    }
+
+    // Check for invalid characters (filesystem unsafe)
+    let invalid_chars = ['/', '\\', ':', '*', '?', '"', '<', '>', '|', '\0', '\n', '\r'];
+    if let Some(invalid_char) = disc_id.chars().find(|c| invalid_chars.contains(c)) {
+        return Err(format!("Invalid character '{}' in disc ID", invalid_char));
+    }
+
+    // Check for reserved names (Windows system files, etc.)
+    let lower_id = disc_id.to_lowercase();
+    let reserved_names = ["con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8", "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9"];
+    if reserved_names.contains(&lower_id.as_str()) {
+        return Err(format!("'{}' is a reserved system name", disc_id));
+    }
+
+    Ok(())
+}
+
 /// Create disc layout in staging directory.
 pub fn create_disc_layout(
     staging_dir: &Path,
@@ -92,6 +148,9 @@ pub fn write_disc_info(
     notes: Option<&str>,
     source_roots: &[PathBuf],
     tool_version: &str,
+    set_id: Option<&str>,
+    sequence_number: Option<u32>,
+    total_discs: Option<u32>,
 ) -> Result<()> {
     let disc_info_path = disc_root.join("DISC_INFO.txt");
 
@@ -105,6 +164,12 @@ pub fn write_disc_info(
 
     if let Some(notes_str) = notes {
         info.push_str(&format!("Notes: {}\n", notes_str));
+    }
+
+    // Add multi-disc information if available
+    if let (Some(set_id), Some(seq), Some(total)) = (set_id, sequence_number, total_discs) {
+        info.push_str(&format!("Multi-Disc Set: {}\n", set_id));
+        info.push_str(&format!("Disc Sequence: {} of {}\n", seq, total));
     }
 
     info.push_str("\nSource Roots:\n");
@@ -206,6 +271,9 @@ mod tests {
             Some("Test disc"),
             &source_roots,
             "1.0.0",
+            None, // set_id
+            None, // sequence_number
+            None, // total_discs
         )?;
 
         let info_path = disc_root.join("DISC_INFO.txt");
@@ -217,5 +285,88 @@ mod tests {
         assert!(content.contains("/tmp/test1"));
 
         Ok(())
+    }
+
+    #[test]
+    fn test_write_disc_info_multi_disc() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let disc_root = temp_dir.path();
+
+        let source_roots = vec![PathBuf::from("/tmp/test1"), PathBuf::from("/tmp/test2")];
+        write_disc_info(
+            disc_root,
+            "2024-BD-ARCHIVE-002",
+            Some("Second disc of backup set"),
+            &source_roots,
+            "1.0.0",
+            Some("SET-20240115103000"),
+            Some(2),
+            Some(5),
+        )?;
+
+        let info_path = disc_root.join("DISC_INFO.txt");
+        assert!(info_path.exists());
+
+        let content = fs::read_to_string(&info_path)?;
+        assert!(content.contains("Disc-ID: 2024-BD-ARCHIVE-002"));
+        assert!(content.contains("Second disc of backup set"));
+        assert!(content.contains("Multi-Disc Set: SET-20240115103000"));
+        assert!(content.contains("Disc Sequence: 2 of 5"));
+        assert!(content.contains("/tmp/test1"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_generate_multi_disc_id() {
+        let base_id = "2024-BD-ARCHIVE";
+        assert_eq!(generate_multi_disc_id(base_id, 1), "2024-BD-ARCHIVE-001");
+        assert_eq!(generate_multi_disc_id(base_id, 15), "2024-BD-ARCHIVE-015");
+        assert_eq!(generate_multi_disc_id(base_id, 123), "2024-BD-ARCHIVE-123");
+    }
+
+    #[test]
+    fn test_generate_multi_disc_volume_label() {
+        // Test normal case
+        let label = generate_multi_disc_volume_label("2024-BD-ARCHIVE", 1, 3);
+        assert_eq!(label, "BDARCHIVE_2024D001_OF_003");
+
+        // Test longer base ID (should still fit)
+        let label = generate_multi_disc_volume_label("2024-BD-VERY-LONG-ARCHIVE-NAME", 5, 12);
+        assert!(label.len() <= 32); // Should fit within filesystem limits
+        assert!(label.contains("005"));
+        assert!(label.contains("012"));
+    }
+
+    #[test]
+    fn test_validate_disc_id() {
+        // Valid IDs
+        assert!(validate_disc_id("2024-BD-001").is_ok());
+        assert!(validate_disc_id("MY_ARCHIVE_001").is_ok());
+        assert!(validate_disc_id("test-disc").is_ok());
+
+        // Invalid: empty
+        assert!(validate_disc_id("").is_err());
+
+        // Invalid: too long
+        assert!(validate_disc_id(&"A".repeat(51)).is_err());
+
+        // Invalid: bad characters
+        assert!(validate_disc_id("test/disc").is_err());
+        assert!(validate_disc_id("test\\disc").is_err());
+        assert!(validate_disc_id("test:disc").is_err());
+        assert!(validate_disc_id("test*disc").is_err());
+        assert!(validate_disc_id("test?disc").is_err());
+        assert!(validate_disc_id("test\"disc").is_err());
+        assert!(validate_disc_id("test<disc").is_err());
+        assert!(validate_disc_id("test>disc").is_err());
+        assert!(validate_disc_id("test|disc").is_err());
+
+        // Invalid: reserved names
+        assert!(validate_disc_id("con").is_err());
+        assert!(validate_disc_id("CON").is_err());
+        assert!(validate_disc_id("nul").is_err());
+        assert!(validate_disc_id("com1").is_err());
+        assert!(validate_disc_id("lpt1").is_err());
     }
 }

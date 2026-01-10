@@ -17,7 +17,7 @@ pub mod ui;
 pub mod verify;
 
 pub use config::Config;
-pub use database::{init_database, Disc, FileRecord, VerificationRun};
+pub use database::{init_database, Disc, DiscSet, FileRecord, VerificationRun, MultiDiscOps};
 pub use disc::{
     create_disc_layout, format_timestamp_now, generate_disc_id, generate_volume_label,
     get_tool_version, write_disc_info,
