@@ -239,6 +239,7 @@ fn stage_with_copy_progress(
 }
 
 /// Stage files using rsync.
+#[allow(dead_code)]
 fn stage_with_rsync(source: &Path, dest: &Path, dry_run: bool) -> Result<()> {
     debug!(
         "Staging with rsync: {} -> {} (dry_run: {})",
@@ -262,6 +263,7 @@ fn stage_with_rsync(source: &Path, dest: &Path, dry_run: bool) -> Result<()> {
 }
 
 /// Stage files using standard copy.
+#[allow(dead_code)]
 fn stage_with_copy(source: &Path, dest: &Path, dry_run: bool) -> Result<()> {
     debug!(
         "Staging with copy: {} -> {}",
@@ -283,7 +285,7 @@ fn stage_with_copy(source: &Path, dest: &Path, dry_run: bool) -> Result<()> {
 }
 
 /// Recursively copy directory.
-fn copy_directory_recursive(source: &Path, dest: &Path) -> Result<()> {
+pub fn copy_directory_recursive(source: &Path, dest: &Path) -> Result<()> {
     fs::create_dir_all(dest)?;
 
     let entries = fs::read_dir(source)
@@ -347,6 +349,325 @@ pub fn check_capacity(source_folders: &[PathBuf], capacity_bytes: u64) -> Result
     Ok((total_size, exceeds))
 }
 
+/// Represents a directory entry with size information for layout planning
+#[derive(Debug, Clone)]
+pub struct DirectoryEntry {
+    pub path: PathBuf,
+    pub size_bytes: u64,
+    pub is_file: bool,
+    pub children: Vec<DirectoryEntry>,
+}
+
+/// Analyze directory structure for multi-disc planning
+pub fn analyze_directory_structure(root_path: &Path) -> Result<DirectoryEntry> {
+    fn analyze_recursive(path: &Path) -> Result<DirectoryEntry> {
+        let metadata = fs::metadata(path)
+            .with_context(|| format!("Failed to read metadata for: {}", path.display()))?;
+
+        if metadata.is_file() {
+            return Ok(DirectoryEntry {
+                path: path.to_path_buf(),
+                size_bytes: metadata.len(),
+                is_file: true,
+                children: Vec::new(),
+            });
+        }
+
+        let mut total_size = 0u64;
+        let mut children = Vec::new();
+
+        let entries = fs::read_dir(path)
+            .with_context(|| format!("Failed to read directory: {}", path.display()))?;
+
+        for entry in entries {
+            let entry = entry.context("Failed to read directory entry")?;
+            let child_path = entry.path();
+            let child_entry = analyze_recursive(&child_path)?;
+            total_size += child_entry.size_bytes;
+            children.push(child_entry);
+        }
+
+        // Sort children by size (largest first) for better packing
+        children.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
+
+        Ok(DirectoryEntry {
+            path: path.to_path_buf(),
+            size_bytes: total_size,
+            is_file: false,
+            children,
+        })
+    }
+
+    analyze_recursive(root_path)
+}
+
+/// Plan disc layout to minimize directory splits across discs
+pub fn plan_disc_layout(
+    source_folders: &[PathBuf],
+    disc_capacity_bytes: u64,
+) -> Result<Vec<DiscPlan>> {
+    plan_disc_layout_with_progress(source_folders, disc_capacity_bytes, |_| {})
+}
+
+/// Plan disc layout with progress callback for UI feedback
+pub fn plan_disc_layout_with_progress<F>(
+    source_folders: &[PathBuf],
+    disc_capacity_bytes: u64,
+    mut progress_callback: F,
+) -> Result<Vec<DiscPlan>>
+where
+    F: FnMut(&str) -> (),
+{
+    let mut all_entries = Vec::new();
+
+    progress_callback("🔍 Analyzing source directories...");
+
+    // Analyze all source directories and flatten their children as packable entries
+    for (i, folder) in source_folders.iter().enumerate() {
+        if folder.exists() {
+            progress_callback(&format!("📂 Analyzing folder {}/{}: {}", i + 1, source_folders.len(), folder.display()));
+            let structure = analyze_directory_structure(folder)?;
+
+            // If this is a directory with children, add the children as packable entries
+            // Otherwise, add the structure itself
+            if !structure.is_file && !structure.children.is_empty() {
+                all_entries.extend(structure.children);
+            } else {
+                all_entries.push(structure);
+            }
+        }
+    }
+
+    progress_callback(&format!("📊 Found {} items to pack across discs", all_entries.len()));
+
+    // Sort by size (largest first) for better packing
+    progress_callback("🔄 Sorting items by size for optimal packing...");
+    all_entries.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
+
+    let mut discs = Vec::new();
+    let current_disc = DiscPlan::new(discs.len() + 1, disc_capacity_bytes);
+    discs.push(current_disc);
+
+    progress_callback("🎯 Starting disc packing algorithm...");
+
+    // Use a greedy bin-packing approach that prefers keeping directories together
+    for (i, entry) in all_entries.iter().enumerate() {
+        if i % 50 == 0 && i > 0 {
+            progress_callback(&format!("📦 Packed {}/{} items ({} discs so far)", i, all_entries.len(), discs.len()));
+        }
+
+        if !try_add_to_disc(&mut discs, &entry, disc_capacity_bytes) {
+            // If we couldn't fit the entire entry, try to fit its children individually
+            if !entry.is_file && !entry.children.is_empty() {
+                // Sort children by size (largest first) for better packing
+                let mut children = entry.children.clone();
+                children.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
+
+                for child in children {
+                    if !try_add_to_disc(&mut discs, &child, disc_capacity_bytes) {
+                        // If child doesn't fit anywhere, create a new disc for it
+                        let mut new_disc = DiscPlan::new(discs.len() + 1, disc_capacity_bytes);
+                        if !new_disc.try_add_entry(&child) {
+                            // If child still doesn't fit, split it
+                            split_directory_across_discs(&mut discs, child, disc_capacity_bytes);
+                        } else {
+                            discs.push(new_disc);
+                        }
+                    }
+                }
+            } else {
+                // Entry is a file or has no children - try to put it on a new disc
+                let mut new_disc = DiscPlan::new(discs.len() + 1, disc_capacity_bytes);
+                if !new_disc.try_add_entry(&entry) {
+                    // If it still doesn't fit, we have a problem (file too big)
+                    warn!("Entry too large for any disc: {} ({} bytes)", entry.path.display(), entry.size_bytes);
+                } else {
+                    discs.push(new_disc);
+                }
+            }
+        }
+    }
+
+    progress_callback(&format!("✅ Planning complete! Created {} discs for {} items", discs.len(), all_entries.len()));
+    Ok(discs)
+}
+
+/// Try to add an entry to existing discs, preferring to keep it whole
+fn try_add_to_disc(discs: &mut Vec<DiscPlan>, entry: &DirectoryEntry, disc_capacity: u64) -> bool {
+    // First try to add to existing discs without splitting
+    for disc in discs.iter_mut() {
+        if disc.try_add_entry(entry) {
+            return true;
+        }
+    }
+
+    // If that didn't work, try splitting if it's a directory
+    if !entry.is_file {
+        for disc in discs.iter_mut() {
+            if disc.try_add_partial_directory(entry, disc_capacity) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+/// Split a large directory across multiple discs
+fn split_directory_across_discs(
+    discs: &mut Vec<DiscPlan>,
+    entry: DirectoryEntry,
+    disc_capacity: u64,
+) {
+    if entry.is_file {
+        // For files that are too big (shouldn't happen with Blu-ray, but handle gracefully)
+        // This would require file splitting, which we're avoiding per requirements
+        warn!("File too large for any disc: {} ({} bytes)", entry.path.display(), entry.size_bytes);
+        return;
+    }
+
+    // Sort children by size for better packing
+    let mut remaining_children = entry.children;
+    remaining_children.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
+
+    let mut part_num = 1;
+    let dir_name = entry.path.file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown");
+
+    while !remaining_children.is_empty() {
+        // Find or create a disc with space
+        let disc_idx = discs.iter().position(|d| d.used_bytes < disc_capacity)
+            .unwrap_or_else(|| {
+                discs.push(DiscPlan::new(discs.len() + 1, disc_capacity));
+                discs.len() - 1
+            });
+
+        let disc = &mut discs[disc_idx];
+
+        // Create a split directory entry for this disc
+        let mut split_children = Vec::new();
+        let mut split_size = 0u64;
+
+        // Try to fit as many children as possible
+        remaining_children.retain(|child| {
+            if split_size + child.size_bytes <= disc_capacity - disc.used_bytes {
+                split_size += child.size_bytes;
+                split_children.push(child.clone());
+                false // Remove from remaining
+            } else {
+                true // Keep for next disc
+            }
+        });
+
+        if !split_children.is_empty() {
+            // Create the split directory path
+            let split_dir_name = format!("{}_part{}", dir_name, part_num);
+            let split_path = entry.path.with_file_name(split_dir_name);
+
+            let split_entry = DirectoryEntry {
+                path: split_path,
+                size_bytes: split_size,
+                is_file: false,
+                children: split_children,
+            };
+
+            disc.add_entry(split_entry);
+            part_num += 1;
+        } else {
+            // No more children could fit, avoid infinite loop
+            break;
+        }
+    }
+}
+
+/// Represents a planned disc with its contents
+#[derive(Debug, Clone)]
+pub struct DiscPlan {
+    pub disc_number: usize,
+    pub capacity_bytes: u64,
+    pub used_bytes: u64,
+    pub entries: Vec<DirectoryEntry>,
+    pub split_directories: Vec<String>, // Names of directories split across discs
+}
+
+impl DiscPlan {
+    pub fn new(disc_number: usize, capacity_bytes: u64) -> Self {
+        Self {
+            disc_number,
+            capacity_bytes,
+            used_bytes: 0,
+            entries: Vec::new(),
+            split_directories: Vec::new(),
+        }
+    }
+
+    /// Try to add an entire entry to this disc
+    pub fn try_add_entry(&mut self, entry: &DirectoryEntry) -> bool {
+        if self.used_bytes + entry.size_bytes <= self.capacity_bytes {
+            self.used_bytes += entry.size_bytes;
+            self.entries.push(entry.clone());
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Try to add part of a directory to this disc
+    pub fn try_add_partial_directory(&mut self, entry: &DirectoryEntry, max_size: u64) -> bool {
+        if entry.is_file {
+            return false;
+        }
+
+        let available_space = self.capacity_bytes - self.used_bytes;
+        if available_space < max_size / 10 {
+            // Don't bother with less than 10% of disc space
+            return false;
+        }
+
+        // Try to fit some children
+        let mut added_size = 0u64;
+        let mut added_children = Vec::new();
+
+        for child in &entry.children {
+            if added_size + child.size_bytes <= available_space {
+                added_size += child.size_bytes;
+                added_children.push(child.clone());
+            } else {
+                break;
+            }
+        }
+
+        if !added_children.is_empty() {
+            // Create a partial directory entry
+            let partial_entry = DirectoryEntry {
+                path: entry.path.clone(),
+                size_bytes: added_size,
+                is_file: false,
+                children: added_children,
+            };
+
+            self.used_bytes += added_size;
+            self.entries.push(partial_entry);
+            self.split_directories.push(entry.path.display().to_string());
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Force add an entry (used internally after planning)
+    pub fn add_entry(&mut self, entry: DirectoryEntry) {
+        self.used_bytes += entry.size_bytes;
+        self.entries.push(entry);
+    }
+
+    /// Get utilization percentage
+    pub fn utilization_percent(&self) -> f64 {
+        (self.used_bytes as f64 / self.capacity_bytes as f64) * 100.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -397,6 +718,129 @@ mod tests {
 
         assert!(size < 1000);
         assert!(!exceeds);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_analyze_directory_structure() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let root_dir = temp_dir.path().join("root");
+        fs::create_dir_all(&root_dir)?;
+
+        // Create test structure:
+        // root/
+        //   file1.txt (10 bytes)
+        //   subdir/
+        //     file2.txt (15 bytes)
+        //   another_file.txt (20 bytes)
+
+        fs::write(root_dir.join("file1.txt"), "0123456789")?; // 10 bytes
+        fs::create_dir_all(root_dir.join("subdir"))?;
+        fs::write(root_dir.join("subdir").join("file2.txt"), "012345678901234")?; // 15 bytes
+        fs::write(root_dir.join("another_file.txt"), "01234567890123456789")?; // 20 bytes
+
+        let structure = analyze_directory_structure(&root_dir)?;
+
+        assert_eq!(structure.size_bytes, 45); // 10 + 15 + 20
+        assert!(!structure.is_file);
+        assert_eq!(structure.children.len(), 3); // 2 files + 1 directory
+
+        // Check that children are sorted by size (largest first)
+        assert!(structure.children[0].size_bytes >= structure.children[1].size_bytes);
+        assert!(structure.children[1].size_bytes >= structure.children[2].size_bytes);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_disc_plan_basic() {
+        let capacity = 100 * 1024 * 1024; // 100MB
+        let mut plan = DiscPlan::new(1, capacity);
+
+        let entry = DirectoryEntry {
+            path: PathBuf::from("/test/dir"),
+            size_bytes: 50 * 1024 * 1024, // 50MB
+            is_file: false,
+            children: Vec::new(),
+        };
+
+        assert!(plan.try_add_entry(&entry));
+        assert_eq!(plan.used_bytes, 50 * 1024 * 1024);
+        assert_eq!(plan.entries.len(), 1);
+        assert!((plan.utilization_percent() - 50.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_disc_plan_capacity_exceeded() {
+        let capacity = 50 * 1024 * 1024; // 50MB
+        let mut plan = DiscPlan::new(1, capacity);
+
+        let entry = DirectoryEntry {
+            path: PathBuf::from("/test/dir"),
+            size_bytes: 100 * 1024 * 1024, // 100MB (too big)
+            is_file: false,
+            children: Vec::new(),
+        };
+
+        assert!(!plan.try_add_entry(&entry));
+        assert_eq!(plan.used_bytes, 0);
+        assert_eq!(plan.entries.len(), 0);
+    }
+
+    #[test]
+    fn test_plan_disc_layout_single_disc() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let source_dir = temp_dir.path().join("source");
+        fs::create_dir_all(&source_dir)?;
+
+        // Create files totaling 30MB (should fit on one 100MB disc)
+        fs::write(source_dir.join("file1.txt"), vec![0u8; 10 * 1024 * 1024])?; // 10MB
+        fs::write(source_dir.join("file2.txt"), vec![0u8; 20 * 1024 * 1024])?; // 20MB
+
+        let disc_capacity = 100 * 1024 * 1024; // 100MB
+        let plans = plan_disc_layout(&[source_dir], disc_capacity)?;
+
+        assert_eq!(plans.len(), 1);
+        assert_eq!(plans[0].disc_number, 1);
+        assert!(plans[0].used_bytes > 0);
+        assert!(plans[0].used_bytes <= disc_capacity);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_plan_disc_layout_multiple_discs() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let source_dir = temp_dir.path().join("source");
+        fs::create_dir_all(&source_dir)?;
+
+        // Create large directories that will require multiple discs
+        let big_dir1 = source_dir.join("bigdir1");
+        let big_dir2 = source_dir.join("bigdir2");
+        fs::create_dir_all(&big_dir1)?;
+        fs::create_dir_all(&big_dir2)?;
+
+        // Create files totaling 250MB across two directories
+        fs::write(big_dir1.join("file1.txt"), vec![0u8; 100 * 1024 * 1024])?; // 100MB
+        fs::write(big_dir1.join("file2.txt"), vec![0u8; 50 * 1024 * 1024])?;  // 50MB
+        fs::write(big_dir2.join("file3.txt"), vec![0u8; 80 * 1024 * 1024])?;  // 80MB
+        fs::write(big_dir2.join("file4.txt"), vec![0u8; 20 * 1024 * 1024])?;  // 20MB
+
+        let disc_capacity = 150 * 1024 * 1024; // 150MB discs
+
+        let plans = plan_disc_layout(&[source_dir], disc_capacity)?;
+
+        assert!(plans.len() >= 2); // Should need at least 2 discs for 250MB
+
+        // Check that total used space is reasonable
+        let total_used: u64 = plans.iter().map(|p| p.used_bytes).sum();
+        assert_eq!(total_used, 250 * 1024 * 1024);
+
+        // Check that no disc exceeds capacity
+        for plan in &plans {
+            assert!(plan.used_bytes <= disc_capacity);
+        }
 
         Ok(())
     }

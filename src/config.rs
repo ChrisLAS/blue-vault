@@ -17,7 +17,7 @@ pub struct Config {
     /// Database path (defaults to data_dir/archive.db)
     pub database_path: Option<String>,
 
-    /// Default disc capacity in GB (25 or 50)
+    /// Default disc capacity in GB (25, 50, or 100)
     #[serde(default = "default_capacity_gb")]
     pub default_capacity_gb: u64,
 
@@ -229,8 +229,8 @@ impl Config {
         }
 
         // Validate capacity
-        if self.default_capacity_gb != 25 && self.default_capacity_gb != 50 {
-            anyhow::bail!("Default capacity must be 25 or 50 GB");
+        if ![25, 50, 100].contains(&self.default_capacity_gb) {
+            anyhow::bail!("Default capacity must be 25, 50, or 100 GB");
         }
 
         Ok(())
@@ -269,6 +269,17 @@ auto_verify_after_burn = true
         assert_eq!(config.device, "/dev/sr1");
         assert_eq!(config.default_capacity_gb, 50);
         assert!(config.verification.auto_verify_after_burn);
+    }
+
+    #[test]
+    fn test_config_100gb_capacity() {
+        let toml_str = r#"
+device = "/dev/sr0"
+default_capacity_gb = 100
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.default_capacity_gb, 100);
+        assert_eq!(config.default_capacity_bytes(), 100 * 1024 * 1024 * 1024);
     }
 
     #[test]

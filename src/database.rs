@@ -4,7 +4,7 @@ use std::path::Path;
 use tracing::{debug, info};
 
 /// Database schema version
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
 
 /// Initialize the database and run migrations if needed.
 pub fn init_database(db_path: &Path) -> Result<Connection> {
@@ -42,9 +42,12 @@ fn migrate_database(conn: &mut Connection) -> Result<()> {
         if current_version == 0 {
             create_schema(&tx)?;
         }
+        if current_version == 1 {
+            migrate_v1_to_v2(&tx)?;
+        }
         // Future migrations would go here:
-        // if current_version == 1 {
-        //     migrate_v1_to_v2(&tx)?;
+        // if current_version == 2 {
+        //     migrate_v2_to_v3(&tx)?;
         // }
         set_schema_version(&tx, SCHEMA_VERSION)?;
         tx.commit()?;
@@ -97,8 +100,79 @@ fn set_schema_version(tx: &Transaction, version: u32) -> Result<()> {
     Ok(())
 }
 
+/// Migrate from schema version 1 to version 2 (add multi-disc support).
+fn migrate_v1_to_v2(tx: &Transaction) -> Result<()> {
+    info!("Migrating database to version 2: adding multi-disc support");
+
+    // Create disc_sets table
+    tx.execute(
+        "CREATE TABLE IF NOT EXISTS disc_sets (
+            set_id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT,
+            total_size INTEGER NOT NULL,
+            disc_count INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            source_roots TEXT
+        )",
+        [],
+    )?;
+
+    tx.execute(
+        "CREATE INDEX IF NOT EXISTS idx_disc_sets_created_at ON disc_sets(created_at)",
+        [],
+    )?;
+
+    // Add set_id and sequence_number to discs table
+    tx.execute(
+        "ALTER TABLE discs ADD COLUMN set_id TEXT",
+        [],
+    )?;
+
+    tx.execute(
+        "ALTER TABLE discs ADD COLUMN sequence_number INTEGER",
+        [],
+    )?;
+
+    // Create index for the new columns
+    tx.execute(
+        "CREATE INDEX IF NOT EXISTS idx_discs_set_id ON discs(set_id)",
+        [],
+    )?;
+
+    tx.execute(
+        "CREATE INDEX IF NOT EXISTS idx_discs_set_sequence ON discs(set_id, sequence_number)",
+        [],
+    )?;
+
+    // Add foreign key constraint (SQLite doesn't support adding FK constraints to existing tables,
+    // but we can add the index and handle constraints in application code)
+
+    info!("Migration to version 2 completed");
+    Ok(())
+}
+
 /// Create the initial database schema.
 fn create_schema(tx: &Transaction) -> Result<()> {
+    // Disc sets table (for multi-disc archives)
+    tx.execute(
+        "CREATE TABLE IF NOT EXISTS disc_sets (
+            set_id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT,
+            total_size INTEGER NOT NULL,
+            disc_count INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            source_roots TEXT
+        )",
+        [],
+    )?;
+
+    tx.execute(
+        "CREATE INDEX IF NOT EXISTS idx_disc_sets_created_at ON disc_sets(created_at)",
+        [],
+    )?;
+
     // Discs table
     tx.execute(
         "CREATE TABLE IF NOT EXISTS discs (
@@ -111,7 +185,10 @@ fn create_schema(tx: &Transaction) -> Result<()> {
             checksum_manifest_hash TEXT,
             qr_path TEXT,
             source_roots TEXT,
-            tool_version TEXT
+            tool_version TEXT,
+            set_id TEXT,
+            sequence_number INTEGER,
+            FOREIGN KEY (set_id) REFERENCES disc_sets(set_id) ON DELETE SET NULL
         )",
         [],
     )?;
@@ -188,6 +265,163 @@ fn create_schema(tx: &Transaction) -> Result<()> {
     Ok(())
 }
 
+/// Disc set record structure (for multi-disc archives)
+#[derive(Debug, Clone)]
+pub struct DiscSet {
+    pub set_id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub total_size: u64,
+    pub disc_count: u32,
+    pub created_at: String,
+    pub source_roots: Option<String>,
+}
+
+impl DiscSet {
+    /// Insert a new disc set record.
+    pub fn insert(conn: &mut Connection, disc_set: &DiscSet) -> Result<()> {
+        conn.execute(
+            "INSERT INTO disc_sets (
+                set_id, name, description, total_size, disc_count, created_at, source_roots
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                disc_set.set_id,
+                disc_set.name,
+                disc_set.description,
+                disc_set.total_size,
+                disc_set.disc_count,
+                disc_set.created_at,
+                disc_set.source_roots
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Get a disc set by ID.
+    pub fn get(conn: &Connection, set_id: &str) -> Result<Option<DiscSet>> {
+        let mut stmt = conn.prepare(
+            "SELECT set_id, name, description, total_size, disc_count, created_at, source_roots
+             FROM disc_sets WHERE set_id = ?1",
+        )?;
+
+        let disc_set = stmt.query_row(params![set_id], |row| {
+            Ok(DiscSet {
+                set_id: row.get(0)?,
+                name: row.get(1)?,
+                description: row.get(2)?,
+                total_size: row.get(3)?,
+                disc_count: row.get(4)?,
+                created_at: row.get(5)?,
+                source_roots: row.get(6)?,
+            })
+        });
+
+        match disc_set {
+            Ok(ds) => Ok(Some(ds)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Get all discs in this set, ordered by sequence number.
+    pub fn get_discs(conn: &Connection, set_id: &str) -> Result<Vec<Disc>> {
+        let mut stmt = conn.prepare(
+            "SELECT disc_id, volume_label, created_at, notes, iso_size, burn_device,
+                    checksum_manifest_hash, qr_path, source_roots, tool_version, set_id, sequence_number
+             FROM discs WHERE set_id = ?1 ORDER BY sequence_number",
+        )?;
+
+        let disc_iter = stmt.query_map(params![set_id], |row| {
+            Ok(Disc {
+                disc_id: row.get(0)?,
+                volume_label: row.get(1)?,
+                created_at: row.get(2)?,
+                notes: row.get(3)?,
+                iso_size: row.get(4)?,
+                burn_device: row.get(5)?,
+                checksum_manifest_hash: row.get(6)?,
+                qr_path: row.get(7)?,
+                source_roots: row.get(8)?,
+                tool_version: row.get(9)?,
+                set_id: row.get(10)?,
+                sequence_number: row.get(11)?,
+            })
+        })?;
+
+        let mut discs = Vec::new();
+        for disc in disc_iter {
+            discs.push(disc?);
+        }
+
+        Ok(discs)
+    }
+}
+
+/// Generate a unique set ID for a multi-disc archive
+pub fn generate_set_id() -> String {
+    use crate::disc::format_timestamp_now;
+    format!("SET-{}", format_timestamp_now().replace([':', '-'], ""))
+}
+
+/// Helper functions for multi-disc operations
+pub struct MultiDiscOps;
+
+impl MultiDiscOps {
+    /// Create a new disc set and get the set ID
+    pub fn create_disc_set(
+        conn: &mut Connection,
+        name: &str,
+        description: Option<&str>,
+        total_size: u64,
+        disc_count: u32,
+        source_roots: Option<&str>,
+    ) -> Result<String> {
+        let set_id = generate_set_id();
+        let created_at = crate::disc::format_timestamp_now();
+
+        let disc_set = DiscSet {
+            set_id: set_id.clone(),
+            name: name.to_string(),
+            description: description.map(|s| s.to_string()),
+            total_size,
+            disc_count,
+            created_at,
+            source_roots: source_roots.map(|s| s.to_string()),
+        };
+
+        DiscSet::insert(conn, &disc_set)?;
+        Ok(set_id)
+    }
+
+    /// Add a disc to an existing set
+    pub fn add_disc_to_set(
+        conn: &mut Connection,
+        disc: &mut Disc,
+        set_id: &str,
+        sequence_number: u32,
+    ) -> Result<()> {
+        disc.set_id = Some(set_id.to_string());
+        disc.sequence_number = Some(sequence_number);
+        Disc::insert(conn, disc)?;
+        Ok(())
+    }
+
+    /// Check if a disc is part of a multi-disc set
+    pub fn is_part_of_set(conn: &Connection, disc_id: &str) -> Result<Option<String>> {
+        let disc = Disc::get(conn, disc_id)?;
+        Ok(disc.and_then(|d| d.set_id))
+    }
+
+    /// Get all discs in the same set as the given disc
+    pub fn get_related_discs(conn: &Connection, disc_id: &str) -> Result<Vec<Disc>> {
+        if let Some(set_id) = Self::is_part_of_set(conn, disc_id)? {
+            DiscSet::get_discs(conn, &set_id)
+        } else {
+            Ok(Vec::new())
+        }
+    }
+}
+
 /// Disc record structure
 #[derive(Debug, Clone)]
 pub struct Disc {
@@ -201,6 +435,8 @@ pub struct Disc {
     pub qr_path: Option<String>,
     pub source_roots: Option<String>,
     pub tool_version: Option<String>,
+    pub set_id: Option<String>,
+    pub sequence_number: Option<u32>,
 }
 
 impl Disc {
@@ -209,8 +445,8 @@ impl Disc {
         conn.execute(
             "INSERT INTO discs (
                 disc_id, volume_label, created_at, notes, iso_size, burn_device,
-                checksum_manifest_hash, qr_path, source_roots, tool_version
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                checksum_manifest_hash, qr_path, source_roots, tool_version, set_id, sequence_number
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 disc.disc_id,
                 disc.volume_label,
@@ -221,7 +457,9 @@ impl Disc {
                 disc.checksum_manifest_hash,
                 disc.qr_path,
                 disc.source_roots,
-                disc.tool_version
+                disc.tool_version,
+                disc.set_id,
+                disc.sequence_number
             ],
         )?;
         Ok(())
@@ -231,7 +469,7 @@ impl Disc {
     pub fn get(conn: &Connection, disc_id: &str) -> Result<Option<Disc>> {
         let mut stmt = conn.prepare(
             "SELECT disc_id, volume_label, created_at, notes, iso_size, burn_device,
-                    checksum_manifest_hash, qr_path, source_roots, tool_version
+                    checksum_manifest_hash, qr_path, source_roots, tool_version, set_id, sequence_number
              FROM discs WHERE disc_id = ?1",
         )?;
 
@@ -247,6 +485,8 @@ impl Disc {
                 qr_path: row.get(7)?,
                 source_roots: row.get(8)?,
                 tool_version: row.get(9)?,
+                set_id: row.get(10)?,
+                sequence_number: row.get(11)?,
             })
         });
 
@@ -261,7 +501,7 @@ impl Disc {
     pub fn list_all(conn: &Connection) -> Result<Vec<Disc>> {
         let mut stmt = conn.prepare(
             "SELECT disc_id, volume_label, created_at, notes, iso_size, burn_device,
-                    checksum_manifest_hash, qr_path, source_roots, tool_version
+                    checksum_manifest_hash, qr_path, source_roots, tool_version, set_id, sequence_number
              FROM discs ORDER BY created_at DESC",
         )?;
 
@@ -277,6 +517,8 @@ impl Disc {
                 qr_path: row.get(7)?,
                 source_roots: row.get(8)?,
                 tool_version: row.get(9)?,
+                set_id: row.get(10)?,
+                sequence_number: row.get(11)?,
             })
         })?;
 
@@ -425,6 +667,8 @@ mod tests {
             qr_path: None,
             source_roots: None,
             tool_version: None,
+            set_id: None,
+            sequence_number: None,
         };
 
         Disc::insert(&mut conn, &disc)?;
@@ -434,6 +678,81 @@ mod tests {
         let d = retrieved.unwrap();
         assert_eq!(d.disc_id, "2024-BD-001");
         assert_eq!(d.notes, Some("Test disc".to_string()));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_disc_set_operations() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let db_path = temp_dir.path().join("test.db");
+        let mut conn = init_database(&db_path)?;
+
+        // Create a disc set
+        let set_id = MultiDiscOps::create_disc_set(
+            &mut conn,
+            "Test Multi-Disc Archive",
+            Some("A test archive spanning multiple discs"),
+            500 * 1024 * 1024, // 500MB total
+            2, // 2 discs
+            Some("/home/user/data"),
+        )?;
+
+        // Create discs for the set
+        let mut disc1 = Disc {
+            disc_id: "2024-BD-001".to_string(),
+            volume_label: "BDARCHIVE_2024_BD_001".to_string(),
+            created_at: "2024-01-15T10:30:00Z".to_string(),
+            notes: Some("First disc of set".to_string()),
+            iso_size: Some(250 * 1024 * 1024),
+            burn_device: Some("/dev/sr0".to_string()),
+            checksum_manifest_hash: None,
+            qr_path: None,
+            source_roots: None,
+            tool_version: None,
+            set_id: None,
+            sequence_number: None,
+        };
+
+        let mut disc2 = Disc {
+            disc_id: "2024-BD-002".to_string(),
+            volume_label: "BDARCHIVE_2024_BD_002".to_string(),
+            created_at: "2024-01-15T11:00:00Z".to_string(),
+            notes: Some("Second disc of set".to_string()),
+            iso_size: Some(250 * 1024 * 1024),
+            burn_device: Some("/dev/sr0".to_string()),
+            checksum_manifest_hash: None,
+            qr_path: None,
+            source_roots: None,
+            tool_version: None,
+            set_id: None,
+            sequence_number: None,
+        };
+
+        // Add discs to the set
+        MultiDiscOps::add_disc_to_set(&mut conn, &mut disc1, &set_id, 1)?;
+        MultiDiscOps::add_disc_to_set(&mut conn, &mut disc2, &set_id, 2)?;
+
+        // Verify the set was created
+        let retrieved_set = DiscSet::get(&conn, &set_id)?;
+        assert!(retrieved_set.is_some());
+        let set = retrieved_set.unwrap();
+        assert_eq!(set.name, "Test Multi-Disc Archive");
+        assert_eq!(set.disc_count, 2);
+        assert_eq!(set.total_size, 500 * 1024 * 1024);
+
+        // Verify discs are in the set
+        let set_discs = DiscSet::get_discs(&conn, &set_id)?;
+        assert_eq!(set_discs.len(), 2);
+        assert_eq!(set_discs[0].disc_id, "2024-BD-001");
+        assert_eq!(set_discs[0].sequence_number, Some(1));
+        assert_eq!(set_discs[1].disc_id, "2024-BD-002");
+        assert_eq!(set_discs[1].sequence_number, Some(2));
+
+        // Test relationship queries
+        assert_eq!(MultiDiscOps::is_part_of_set(&conn, "2024-BD-001")?, Some(set_id.clone()));
+        let related_discs = MultiDiscOps::get_related_discs(&conn, "2024-BD-001")?;
+        assert_eq!(related_discs.len(), 2);
 
         Ok(())
     }
