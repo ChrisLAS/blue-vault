@@ -401,7 +401,8 @@ impl DirectorySelector {
         let async_completed = self.check_async_loading();
 
         // Start loading if needed and not already loading
-        let started_loading = if self.entries.is_empty() && self.loading_state == LoadingState::Idle {
+        let started_loading = if self.entries.is_empty() && self.loading_state == LoadingState::Idle
+        {
             self.ensure_entries_loaded().unwrap_or(false)
         } else {
             false
@@ -485,7 +486,7 @@ impl DirectorySelector {
         // Use wrap to ensure long paths don't break the layout
         let para = Paragraph::new(text_content)
             .block(block)
-            .style(text_style)
+            .style(theme.secondary_style())
             .alignment(ratatui::layout::Alignment::Left)
             .wrap(ratatui::widgets::Wrap { trim: true });
 
@@ -509,7 +510,8 @@ impl DirectorySelector {
                         Block::default()
                             .title("Directory Browser")
                             .borders(Borders::ALL)
-                            .border_style(theme.border_style()),
+                            .border_style(theme.border_style())
+                            .style(theme.secondary_style()),
                     )
                     .style(theme.secondary_style());
                 frame.render_widget(para, area);
@@ -557,6 +559,7 @@ impl DirectorySelector {
             .collect();
 
         let list = List::new(items)
+            .style(theme.secondary_style())
             .block(
                 Block::default()
                     .title(if is_focused {
@@ -613,7 +616,10 @@ fn load_directory_entries_sync(current_dir: PathBuf) -> LoadingResult {
                     }
                 }
             }
-            LoadingResult { entries, error: None }
+            LoadingResult {
+                entries,
+                error: None,
+            }
         }
         Err(e) => LoadingResult {
             entries: Vec::new(),

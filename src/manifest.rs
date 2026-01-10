@@ -52,15 +52,17 @@ pub fn generate_manifest_and_sums_with_progress(
 
     if let Some(ref mut callback) = progress_callback {
         let checksum_type = if fast_mode { "CRC32" } else { "SHA256" };
-        callback(&format!("📊 Processing {} files with {} checksums", file_paths.len(), checksum_type));
+        callback(&format!(
+            "📊 Processing {} files with {} checksums",
+            file_paths.len(),
+            checksum_type
+        ));
     }
 
     // Second pass: process files in parallel
     let files: Vec<FileMetadata> = file_paths
         .into_par_iter()
-        .map(|file_path| {
-            generate_file_metadata_parallel(&file_path, base, fast_mode)
-        })
+        .map(|file_path| generate_file_metadata_parallel(&file_path, base, fast_mode))
         .collect::<Result<Vec<_>>>()?;
 
     // Send progress updates for each file (not thread-safe, so do it sequentially)
@@ -72,12 +74,20 @@ pub fn generate_manifest_and_sums_with_progress(
             // Show progress every 10 files or for large files
             if i % 10 == 0 || file.size > 100 * 1024 * 1024 {
                 let size_mb = file.size / (1024 * 1024);
-                callback(&format!("🔐 {} {}/{} ({}MB): {}",
-                                 checksum_type, i + 1, files.len(), size_mb,
-                                 file.rel_path.display()));
+                callback(&format!(
+                    "🔐 {} {}/{} ({}MB): {}",
+                    checksum_type,
+                    i + 1,
+                    files.len(),
+                    size_mb,
+                    file.rel_path.display()
+                ));
             }
         }
-        callback(&format!("✅ Checksum generation complete: {} files processed", files.len()));
+        callback(&format!(
+            "✅ Checksum generation complete: {} files processed",
+            files.len()
+        ));
     }
 
     info!("Generated manifest with {} files", files.len());
@@ -109,7 +119,11 @@ fn generate_file_metadata_parallel(
     base: &Path,
     fast_mode: bool,
 ) -> Result<FileMetadata> {
-    debug!("Processing file: {} (fast_mode: {})", file_path.display(), fast_mode);
+    debug!(
+        "Processing file: {} (fast_mode: {})",
+        file_path.display(),
+        fast_mode
+    );
     let rel_path = crate::paths::make_relative(file_path, base)?;
 
     let metadata = fs::metadata(file_path)
@@ -155,7 +169,6 @@ fn walk_directory(dir: &Path, base: &Path, files: &mut Vec<FileMetadata>) -> Res
 
     Ok(())
 }
-
 
 /// Generate metadata for a single file.
 #[allow(dead_code)]

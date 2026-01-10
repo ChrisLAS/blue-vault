@@ -43,8 +43,12 @@ pub fn stage_files_with_progress(
 
     if let Some(ref mut callback) = progress_callback {
         let size_mb = total_size_bytes / (1024 * 1024);
-        callback(&format!("📁 Preparing to stage {} files ({}MB) from {} folders",
-                         total_files, size_mb, source_folders.len()));
+        callback(&format!(
+            "📁 Preparing to stage {} files ({}MB) from {} folders",
+            total_files,
+            size_mb,
+            source_folders.len()
+        ));
     }
 
     for (i, source) in source_folders.iter().enumerate() {
@@ -64,27 +68,52 @@ pub fn stage_files_with_progress(
             .unwrap_or("unknown");
 
         if let Some(ref mut callback) = progress_callback {
-            callback(&format!("📂 Staging folder {}/{}: {} ({} files processed so far)",
-                             i + 1, source_folders.len(), folder_name, processed_files));
+            callback(&format!(
+                "📂 Staging folder {}/{}: {} ({} files processed so far)",
+                i + 1,
+                source_folders.len(),
+                folder_name,
+                processed_files
+            ));
         }
 
         let dest = archive_dir.join(folder_name);
 
-    // Enhanced staging with file-by-file progress
-    if use_rsync {
-        stage_with_rsync_progress(source, &dest, dry_run, &mut progress_callback, &mut processed_files)?;
-    } else {
-        stage_with_copy_progress(source, &dest, dry_run, &mut progress_callback, &mut processed_files)?;
-    }
+        // Enhanced staging with file-by-file progress
+        if use_rsync {
+            stage_with_rsync_progress(
+                source,
+                &dest,
+                dry_run,
+                &mut progress_callback,
+                &mut processed_files,
+            )?;
+        } else {
+            stage_with_copy_progress(
+                source,
+                &dest,
+                dry_run,
+                &mut progress_callback,
+                &mut processed_files,
+            )?;
+        }
 
         staged_paths.push(dest);
     }
 
     if let Some(ref mut callback) = progress_callback {
-        callback(&format!("✅ Staging complete: {} folders, {} files processed", staged_paths.len(), processed_files));
+        callback(&format!(
+            "✅ Staging complete: {} folders, {} files processed",
+            staged_paths.len(),
+            processed_files
+        ));
     }
 
-    info!("Staged {} folders, {} files", staged_paths.len(), processed_files);
+    info!(
+        "Staged {} folders, {} files",
+        staged_paths.len(),
+        processed_files
+    );
     Ok(staged_paths)
 }
 
@@ -147,7 +176,11 @@ fn stage_with_rsync_progress(
     }
 
     if let Some(ref mut callback) = progress_callback {
-        callback(&format!("🔄 Running rsync: {} -> {}", source.display(), dest.display()));
+        callback(&format!(
+            "🔄 Running rsync: {} -> {}",
+            source.display(),
+            dest.display()
+        ));
     }
 
     crate::commands::execute_command("rsync", &args, dry_run).context("rsync failed")?;
@@ -179,7 +212,11 @@ fn stage_with_copy_progress(
     );
 
     if dry_run {
-        info!("[DRY RUN] Would copy: {} -> {}", source.display(), dest.display());
+        info!(
+            "[DRY RUN] Would copy: {} -> {}",
+            source.display(),
+            dest.display()
+        );
         // Estimate files processed for dry run
         if let Ok((count, _)) = count_files_and_size(source) {
             *processed_files += count;
@@ -210,11 +247,16 @@ fn stage_with_copy_progress(
                         *files_copied += 1;
 
                         // Report progress for larger files or every 10 files
-                        if *files_copied % 10 == 0 || src_path.metadata()?.len() > 10 * 1024 * 1024 {
+                        if *files_copied % 10 == 0 || src_path.metadata()?.len() > 10 * 1024 * 1024
+                        {
                             if let Some(ref mut callback) = progress_callback {
                                 let size_mb = src_path.metadata()?.len() / (1024 * 1024);
-                                callback(&format!("📄 Copied: {} ({}MB) - {} files total",
-                                                 file_name.to_string_lossy(), size_mb, files_copied));
+                                callback(&format!(
+                                    "📄 Copied: {} ({}MB) - {} files total",
+                                    file_name.to_string_lossy(),
+                                    size_mb,
+                                    files_copied
+                                ));
                             }
                         }
                     } else if src_path.is_dir() {
@@ -229,7 +271,11 @@ fn stage_with_copy_progress(
     }
 
     if let Some(ref mut callback) = progress_callback {
-        callback(&format!("📋 Starting copy: {} -> {}", source.display(), dest.display()));
+        callback(&format!(
+            "📋 Starting copy: {} -> {}",
+            source.display(),
+            dest.display()
+        ));
     }
 
     copy_recursive(source, dest, progress_callback, &mut files_copied)?;
@@ -401,4 +447,3 @@ mod tests {
         Ok(())
     }
 }
-

@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
+use rusqlite::params;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::debug;
-use rusqlite::params;
 
 /// Generate a disc ID in the format YYYY-BD-###.
 pub fn generate_disc_id() -> String {
