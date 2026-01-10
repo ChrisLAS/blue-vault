@@ -43,6 +43,9 @@ thiserror = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "time"] }
 
+# File system operations
+walkdir = "2"
+
 # QR code (optional, but we'll try to use qrencode CLI first)
 # If needed, we can add a Rust QR library as fallback
 
