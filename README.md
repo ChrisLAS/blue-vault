@@ -13,17 +13,20 @@ BlueVault is a terminal-based application that helps you create long-term archiv
 ### What It Does
 
 BlueVault helps you:
-- **Archive folders to Blu-ray** (BD-R/BD-RE discs)
+- **Archive folders to Blu-ray** (BD-R/BD-RE discs, 25GB/50GB/100GB support)
+- **Multi-disc archives** - Automatically splits large archives across multiple Blu-ray discs
 - **Stage content** with a standard, mountable disc layout
 - **Generate manifests and checksums** (MANIFEST.txt + SHA256SUMS.txt/CRC32SUMS.txt) for verification
 - **Burn to Blu-ray** using standard Linux tools (xorriso, growisofs)
 - **Maintain a searchable index** (SQLite) stored outside the repo
 - **Search for files** to locate which disc contains them
-- **Generate QR codes** for disc IDs (for printing stickers/spines)
+- **Generate QR codes** for disc identification (for printing stickers/spines)
 - **Verify discs** and maintain verification history
 - **High-performance processing** with multi-core checksum generation
 - **Flexible burn modes** (direct burn or ISO-first)
-- **Dry run testing** with actual ISO creation
+- **Dry run testing** with actual ISO creation and size reporting
+- **Comprehensive cleanup** - Remove build artifacts and temporary files
+- **Real-time progress** with detailed feedback during all operations
 
 ## Visual Design
 
@@ -41,25 +44,51 @@ The theme system supports:
 - **Amber** (optional): Warm amber terminal colors
 - **Mono** (optional): High-contrast monochrome for accessibility
 
+## Multi-Disc Archives
+
+BlueVault features comprehensive multi-disc archive support for large collections that exceed single Blu-ray capacity:
+
+### Automatic Splitting
+- **Smart Directory Boundaries**: Preserves folder integrity when possible, splits only when necessary
+- **Capacity-Aware Planning**: Supports 25GB, 50GB, and 100GB Blu-ray discs
+- **Sequential Naming**: Auto-generates disc IDs like `2026-BD-ARCHIVE-001`, `2026-BD-ARCHIVE-002`, etc.
+- **Database Tracking**: Links discs in multi-disc sets with proper sequencing
+
+### User Experience
+- **Pre-Burn Preview**: Shows exactly how content will be distributed across discs
+- **Real-Time Progress**: Detailed feedback during multi-disc planning and burning
+- **ISO Path Reporting**: Lists exact file paths for all created ISO images
+- **Sequential Burning**: Guides users through burning multiple discs in order
+
+### Technical Features
+- **Greedy Bin-Packing**: Efficiently distributes files to minimize disc count
+- **Mountable Layout**: Each disc remains browsable on any Linux system
+- **Complete Metadata**: Every disc contains full manifest and checksum information
+- **Set Management**: Database tracks relationships between discs in a set
+
 ## Features
 
 ### Core Functionality
 
+- ✅ **Multi-Disc Archives**: Automatically splits large archives across multiple Blu-ray discs with smart directory boundary detection
 - ✅ **Dual-mode Directory Selection**: Manual path entry + visual directory browser
-- ✅ **Disc Creation Workflow**: Complete flow from folder selection to burned disc
+- ✅ **Disc Creation Workflow**: Complete flow from folder selection to burned disc with detailed progress
 - ✅ **Centralized Index**: SQLite database with file metadata and search capabilities
 - ✅ **Disc Verification**: Verify disc integrity using SHA256/CRC32 checksums
 - ✅ **QR Code Generation**: Generate QR codes for disc identification
 - ✅ **Structured Logging**: Detailed logs for troubleshooting and audit trails
 - ✅ **High-Performance Processing**: Multi-core CRC32/SHA256 generation (10-50x faster)
 - ✅ **Flexible Burn Modes**: Direct burn (space-efficient) or ISO-first (traditional)
-- ✅ **Real-Time Burn Progress**: Live speed, ETA, and progress during 50GB+ burns
+- ✅ **Real-Time Burn Progress**: Live speed, ETA, and progress during 25GB-100GB burns
 - ✅ **Smart Media Detection**: Handles BD-R discs misreported as BD-ROM
 - ✅ **Automatic Cleanup**: Staging files removed after successful/failed burns
+- ✅ **Comprehensive Cleanup**: New menu option to clean build artifacts and temporary files
 - ✅ **Universal Quit Key**: 'Q' quits from any screen, 'Esc' navigates back
-- ✅ **Dry Run Testing**: Creates actual ISO files for burn simulation
+- ✅ **Dry Run Testing**: Creates actual ISO files for burn simulation with size reporting
 - ✅ **Custom Disc IDs**: User-defined names with validation, or auto-generated sequences
-- ✅ **Automatic Disc ID Sequencing**: Database-aware unique ID generation
+- ✅ **Capacity Detection**: Automatic size calculation with multi-disc support (25GB/50GB/100GB)
+- ✅ **Automatic Disc ID Sequencing**: Database-aware unique ID generation for multi-disc sets
+- ✅ **ISO Path Reporting**: Shows exact locations of created ISO files after completion
 
 ### User Interface
 
@@ -240,16 +269,20 @@ On first run, BlueVault will:
 3. **Go back** with `Esc`, **Quit anytime** with `Q`
 4. **Tab** between input fields (in directory selector)
 
-#### Creating a New Disc
+#### Creating a New Disc (Single or Multi-Disc)
 
 1. Select "New Disc / Archive Folders" from the main menu
 2. Enter or accept the auto-generated disc ID (e.g., `2026-BD-001`), or type a custom name
-3. Add optional notes
+3. Add optional notes about the archive
 4. Select source folders using:
    - **Input box**: Type full paths manually (default, always visible)
    - **Directory browser**: Tab to browser mode and navigate with `↑/↓`, press `Enter` to select
-5. Review and confirm
-6. The app will stage files, create ISO, and burn to disc
+5. Review the summary:
+   - For single discs: Shows total size and confirms it fits
+   - For multi-disc: Shows how content will be split across discs with file counts
+6. Press Enter to start - the app handles staging, ISO creation, and burning automatically
+7. For multi-disc archives: Follow prompts to insert discs sequentially
+8. Completion shows paths to all created ISO files
 
 #### Searching the Index
 
@@ -265,6 +298,16 @@ On first run, BlueVault will:
 3. The app will mount (if needed) and verify SHA256SUMS.txt
 4. Results are recorded in the database
 
+#### Cleanup Temporary Files
+
+1. Select "🧹 Cleanup Temporary Files" from the main menu
+2. The app will remove:
+   - Build artifacts (`target/debug`, `target/release`)
+   - Leftover ISO files in the project directory
+   - Temporary files in staging directories
+   - Orphaned temporary files
+3. Shows progress and completion summary
+
 ## Configuration
 
 Configuration is stored in `~/.config/bdarchive/config.toml`:
@@ -279,7 +322,8 @@ staging_dir = "/tmp/bdarchive_staging"
 # Database path
 database_path = "~/.local/share/bdarchive/archive.db"
 
-# Default disc capacity (GB)
+# Default disc capacity (GB): 25, 50, or 100
+# Used for capacity planning and multi-disc calculations
 default_capacity_gb = 25
 
 # Burn configuration
@@ -351,19 +395,28 @@ BlueVault is optimized for speed and efficiency:
 
 ## Recent Improvements (v0.1.2)
 
+**Major New Features:**
+- **Multi-Disc Archives**: Complete support for splitting large archives across multiple Blu-ray discs
+- **Smart Directory Splitting**: Preserves folder integrity while efficiently distributing content
+- **Sequential Disc Burning**: Guided workflow for burning multi-disc sets
+- **ISO Path Reporting**: Shows exact locations of all created ISO files
+- **Comprehensive Cleanup**: New menu option to clean build artifacts and temporary files
+
 **Enhanced User Experience:**
 - **Live Burn Progress**: Real-time speed, time remaining, and progress for 50GB+ burns
 - **Smart Media Handling**: BD-R discs misreported as BD-ROM are automatically handled
 - **Universal Quit Key**: 'Q' quits from any screen, 'Esc' navigates back
 - **Automatic Cleanup**: Staging files removed after successful/failed burns
 - **Unique Disc IDs**: Database-aware sequential ID generation prevents conflicts
+- **Input Field Fixes**: All keyboard input now works properly in text fields
 - **Clean UI**: Removed terminal corruption during progress updates
 
 **Technical Improvements:**
-- **Hybrid Direct Burning**: Temporary ISO creation with automatic cleanup
-- **Database Reliability**: Proper error handling and unique constraint management
-- **Progress Estimation**: Intelligent burn time prediction based on data size
-- **Background Monitoring**: Non-blocking progress updates during long operations
+- **Advanced Planning Algorithm**: Greedy bin-packing for optimal disc utilization
+- **Multi-Disc Database Schema**: Tracks relationships between discs in sets
+- **Enhanced Progress Feedback**: Detailed status updates during all operations
+- **Robust Error Handling**: Comprehensive error recovery and user feedback
+- **Background Processing**: Non-blocking operations with real-time progress
 - **Cross-Platform Distribution**: Docker, build scripts, and CI/CD support
 - **Enhanced Nix Flake**: Complete development environment with all tools
 
@@ -526,6 +579,7 @@ This is an early-stage project. Core functionality is implemented and working, b
 - ✅ Core TUI with phosphor theme
 - ✅ Directory selection (manual + browser)
 - ✅ Disc creation workflow with direct burn mode
+- ✅ Multi-disc archives with smart directory splitting
 - ✅ Database indexing with automatic unique ID generation
 - ✅ Disc verification with SHA256/CRC32 checksums
 - ✅ QR code generation
@@ -537,11 +591,12 @@ This is an early-stage project. Core functionality is implemented and working, b
 - ✅ Dry run testing with actual ISO creation
 - ✅ Automatic temporary file cleanup
 - ✅ Comprehensive error handling and diagnostics
+- ✅ ISO path reporting and cleanup utilities
 
 **Planned:**
-- 🔄 Multi-disc packing (currently warns on capacity)
 - 🔄 Regex search (substring search works)
-- 🔄 Resume support for interrupted operations
+- 🔄 Resume support for interrupted multi-disc operations
+- 🔄 Advanced verification features for multi-disc sets
 
 ## Support
 

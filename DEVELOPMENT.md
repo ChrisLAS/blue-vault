@@ -6,7 +6,7 @@ This document provides context for developers (including AI assistants like Curs
 
 BlueVault is a terminal-based Blu-ray archive manager written in Rust. It features a retro 80s phosphor terminal aesthetic and provides a complete workflow for creating, indexing, and verifying Blu-ray archives.
 
-## Current State (as of latest commit)
+## Current State (v0.1.2 - Multi-Disc Support)
 
 ### Implemented Features
 
@@ -24,6 +24,10 @@ BlueVault is a terminal-based Blu-ray archive manager written in Rust. It featur
   - **Directory browser**: Tab to focus, navigate with ↑/↓, Enter to select
 - Progress indicators with disc activity animations
 - Full workflow: staging → manifest → ISO → burn → index → QR
+- **Multi-disc support**: Automatically splits large archives across multiple discs
+- **Smart planning**: Greedy bin-packing algorithm preserves directory integrity
+- **Sequential burning**: Guides users through burning multiple discs
+- **ISO path reporting**: Shows locations of all created ISO files
 
 ✅ **Directory Selection**
 - Custom-built directory browser using ratatui List widget
@@ -54,6 +58,12 @@ BlueVault is a terminal-based Blu-ray archive manager written in Rust. It featur
 - Disc activity widgets (80s-style CD read/write indicators)
 - Consistent header/footer patterns
 
+✅ **Cleanup Utilities**
+- Comprehensive temporary file removal via main menu
+- Removes build artifacts (target/debug, target/release)
+- Cleans leftover ISO files and staging directories
+- Safe selective cleanup with error handling and progress feedback
+
 ### Known Issues / Limitations
 
 ⚠️ **Directory Browser Loading**
@@ -61,18 +71,25 @@ BlueVault is a terminal-based Blu-ray archive manager written in Rust. It featur
 - Loading happens when you Tab to browser, not on screen entry
 - Future: Could use async/background loading with progress indicator
 
-⚠️ **Multi-disc Packing**
-- Currently warns if content exceeds disc capacity but doesn't auto-split
-- User must manually split content across multiple discs
-- Future: Implement bin-packing algorithm for automatic multi-disc splitting
+✅ **Multi-Disc Archives**
+- Fully implemented with smart directory boundary splitting
+- Greedy bin-packing algorithm preserves directory integrity when possible
+- Automatic sequential disc naming (2026-BD-ARCHIVE-001, etc.)
+- Database tracks multi-disc set relationships
+- User-guided sequential burning with progress feedback
+- ISO path reporting shows locations of all created files
 
 ⚠️ **Search**
 - Only substring matching on paths (regex not implemented)
 - No fuzzy search or advanced query options
 - Future: Add regex support, filename-only search, date range filtering
 
-⚠️ **Progress Indicators**
-- Basic progress bars, no detailed file-by-file progress
+✅ **Enhanced Progress Indicators**
+- Real-time burn progress with speed, ETA, and completion percentage
+- Detailed multi-disc planning progress with item counts
+- Background processing with non-blocking progress updates
+- File-by-file staging progress during disc preparation
+- Comprehensive completion summaries with ISO path reporting
 - Burning progress relies on growisofs output (not always available)
 - Future: More granular progress reporting
 

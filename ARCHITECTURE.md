@@ -12,7 +12,7 @@ bluevault/
 │   ├── config.rs               # Configuration management (TOML)
 │   ├── database.rs             # SQLite schema, migrations, queries
 │   ├── manifest.rs             # Manifest + SHA256 generation
-│   ├── staging.rs              # File staging logic
+│   ├── staging.rs              # File staging logic, multi-disc planning
 │   ├── disc.rs                 # Disc layout, DISC_INFO.txt generation
 │   ├── iso.rs                  # ISO creation via xorriso
 │   ├── burn.rs                 # Burning via growisofs
@@ -144,16 +144,18 @@ bluevault/
 ### discs table
 ```sql
 CREATE TABLE discs (
-    disc_id TEXT PRIMARY KEY,              -- e.g., "2024-BD-001"
-    volume_label TEXT NOT NULL,            -- ISO volume label
+    disc_id TEXT PRIMARY KEY,              -- e.g., "2026-BD-ARCHIVE-001"
+    volume_label TEXT NOT NULL,            -- ISO volume label (BDARCHIVE_2026D001_OF_003)
     created_at TEXT NOT NULL,              -- ISO 8601 timestamp
-    notes TEXT,                            -- User notes
+    notes TEXT,                            -- User notes (includes set info for multi-disc)
     iso_size INTEGER,                      -- ISO size in bytes
     burn_device TEXT,                      -- Device path used
     checksum_manifest_hash TEXT,           -- SHA256 of MANIFEST.txt
     qr_path TEXT,                          -- Path to QR code image
     source_roots TEXT,                     -- JSON array of source paths
-    tool_version TEXT                      -- App version used
+    tool_version TEXT,                     -- App version used
+    set_id TEXT,                           -- Multi-disc set identifier (NULL for single discs)
+    sequence_number INTEGER                -- Position in multi-disc set (NULL for single discs)
 );
 
 CREATE INDEX idx_discs_created_at ON discs(created_at);
@@ -196,6 +198,41 @@ CREATE TABLE verification_runs (
 CREATE INDEX idx_verification_disc_id ON verification_runs(disc_id);
 CREATE INDEX idx_verification_verified_at ON verification_runs(verified_at);
 ```
+
+## Multi-Disc Processing
+
+### Planning Algorithm
+
+BlueVault uses a greedy bin-packing algorithm to distribute files across multiple Blu-ray discs while preserving directory integrity when possible:
+
+1. **Directory Analysis**: Recursively analyze source folders to build a tree of `DirectoryEntry` structures
+2. **Size Calculation**: Compute total sizes for all files and directories
+3. **Greedy Packing**: Sort entries by size (largest first) and pack into discs using these rules:
+   - Try to fit entire directories first (preserves structure)
+   - Split directories at subdirectory boundaries only when necessary
+   - Fill remaining space with individual files
+4. **Sequential Naming**: Generate disc IDs like `2026-BD-ARCHIVE-001`, `2026-BD-ARCHIVE-002`, etc.
+5. **Database Tracking**: Store set relationships using `set_id` and `sequence_number` fields
+
+### Processing Flow
+
+```
+User selects folders → Size calculation → Multi-disc planning → Sequential burning
+                                      ↓
+                            If exceeds capacity: plan_disc_layout_with_progress()
+                                      ↓
+                            Generate DiscPlan[] with file assignments
+                                      ↓
+                            For each disc: stage → create ISO → burn → index
+```
+
+### Key Components
+
+- **`staging::plan_disc_layout_with_progress()`**: Main planning function with progress callbacks
+- **`staging::analyze_directory_structure()`**: Recursive directory analysis
+- **`DiscPlan`**: Represents content and layout for a single disc
+- **`DirectoryEntry`**: File/directory metadata with size and children
+- **Database Multi-disc Ops**: Set management and relationship tracking
 
 ## Disc Layout
 
