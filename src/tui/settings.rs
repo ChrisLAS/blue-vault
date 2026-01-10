@@ -41,9 +41,10 @@ impl Settings {
 
         // Display current settings
         let theme_name = match theme.name {
-            ThemeName::Phosphor => "Phosphor (default)",
+            ThemeName::Phosphor => "Phosphor",
             ThemeName::Amber => "Amber",
             ThemeName::Mono => "Monochrome",
+            ThemeName::HotDog => "HotDog",
         };
 
         let motion_status = if no_animations() {

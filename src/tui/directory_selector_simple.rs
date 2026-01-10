@@ -510,7 +510,8 @@ impl DirectorySelector {
                         Block::default()
                             .title("Directory Browser")
                             .borders(Borders::ALL)
-                            .border_style(theme.border_style()),
+                            .border_style(theme.border_style())
+                            .style(theme.secondary_style()),
                     )
                     .style(theme.secondary_style());
                 frame.render_widget(para, area);
@@ -558,6 +559,7 @@ impl DirectorySelector {
             .collect();
 
         let list = List::new(items)
+            .style(theme.secondary_style())
             .block(
                 Block::default()
                     .title(if is_focused {

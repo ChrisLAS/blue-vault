@@ -142,6 +142,7 @@ impl SearchUI {
                 .collect();
 
             let list = List::new(items)
+                .style(theme.secondary_style())
                 .block(
                     Block::default()
                         .title("Results")

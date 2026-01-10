@@ -81,12 +81,14 @@ impl SplashScreen {
             Line::from("Press any key to continue..."),
         ]);
 
-        let paragraph = Paragraph::new(splash_text).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(theme.border_style())
-                .title("Cold Boot"),
-        );
+        let paragraph = Paragraph::new(splash_text)
+            .style(theme.secondary_style())
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(theme.border_style())
+                    .title(Span::styled("Cold Boot", theme.secondary_style())),
+            );
 
         frame.render_widget(paragraph, center_area);
     }
