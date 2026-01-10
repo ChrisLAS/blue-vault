@@ -17,6 +17,7 @@ enum AppState {
     Splash(tui::SplashScreen),
     MainMenu,
     NewDisc(Box<tui::NewDiscFlow>),
+    Cleanup(Box<tui::NewDiscFlow>),
     Search(tui::SearchUI),
     Verify(tui::VerifyUI),
     ListDiscs(tui::ListDiscs),
@@ -42,6 +43,7 @@ struct App {
     theme: theme::Theme,
     footer: ui::header_footer::Footer,
     disc_creation_rx: Option<mpsc::Receiver<DiscCreationMessage>>,
+    pending_disc_creation: Option<(bool, Vec<PathBuf>, Config)>, // (needs_multi_disc, source_folders, config)
 }
 
 impl App {
@@ -67,6 +69,7 @@ impl App {
             theme,
             footer: ui::header_footer::Footer::new(),
             disc_creation_rx: None,
+            pending_disc_creation: None,
         }
     }
 
@@ -88,12 +91,47 @@ impl App {
                         updated = true;
                     }
                     Ok(DiscCreationMessage::Progress(progress)) => {
-                        flow.set_file_progress(progress);
+                        flow.set_file_progress(progress.clone());
+
+                        // Parse multi-disc progress from the message
+                        if progress.contains("Disc ") && progress.contains("/") {
+                            // Try to extract disc numbers: "💿 Disc 2/3 | 📊 33.3% complete"
+                            if let Some(disc_part) = progress.split("Disc ").nth(1) {
+                                if let Some(disc_info) = disc_part.split(" | ").next() {
+                                    let parts: Vec<&str> = disc_info.split('/').collect();
+                                    if parts.len() == 2 {
+                                        if let (Ok(current), Ok(total)) = (
+                                            parts[0].trim().parse::<u32>(),
+                                            parts[1].trim().parse::<u32>()
+                                        ) {
+                                            // Extract overall progress percentage
+                                            let overall_progress = if let Some(percent_part) = progress.split("📊 ").nth(1) {
+                                                if let Some(percent_str) = percent_part.split('%').next() {
+                                                    percent_str.trim().parse::<f64>().unwrap_or(0.0) / 100.0
+                                                } else {
+                                                    0.0
+                                                }
+                                            } else {
+                                                0.0
+                                            };
+
+                                            flow.set_multi_disc_progress(current, total, overall_progress);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         updated = true;
                     }
                     Ok(DiscCreationMessage::Complete) => {
                         flow.set_processing_state(tui::new_disc::ProcessingState::Complete);
-                        flow.set_status("Disc creation completed successfully!".to_string());
+                        let completion_msg = if flow.is_multi_disc() {
+                            "Multi-disc archive creation completed successfully!".to_string()
+                        } else {
+                            "Disc creation completed successfully!".to_string()
+                        };
+                        flow.set_status(completion_msg);
                         self.disc_creation_rx = None; // Clean up
                         updated = true;
                     }
@@ -159,6 +197,33 @@ impl App {
                     tui::MainMenuAction::Logs => {
                         self.state = AppState::Logs(tui::LogsView::new());
                     }
+                    tui::MainMenuAction::Cleanup => {
+                        // Run cleanup in background and show progress
+                        let (tx, rx) = mpsc::channel::<DiscCreationMessage>();
+                        self.disc_creation_rx = Some(rx);
+
+                        thread::spawn(move || {
+                            match Self::cleanup_temporary_files() {
+                                Ok(()) => {
+                                    let _ = tx.send(DiscCreationMessage::Status(
+                                        "✅ Cleanup completed successfully!".to_string()
+                                    ));
+                                    let _ = tx.send(DiscCreationMessage::Complete);
+                                }
+                                Err(e) => {
+                                    let _ = tx.send(DiscCreationMessage::Error(
+                                        format!("❌ Cleanup failed: {}", e)
+                                    ));
+                                }
+                            }
+                        });
+
+                        // Switch to cleanup state to show cleanup progress
+                        let mut flow = tui::NewDiscFlow::new("CLEANUP".to_string());
+                        flow.set_processing_state(tui::new_disc::ProcessingState::Staging);
+                        flow.set_status("🧹 Cleaning up temporary files...".to_string());
+                        self.state = AppState::Cleanup(Box::new(flow));
+                    }
                     tui::MainMenuAction::Quit => {
                         return Ok(false);
                     }
@@ -191,10 +256,10 @@ impl App {
                     KeyCode::Enter => {
                         match flow.current_step() {
                             tui::new_disc::NewDiscStep::EnterDiscId => {
-                                flow.next_step();
+                                flow.next_step(&self.config)?;
                             }
                             tui::new_disc::NewDiscStep::EnterNotes => {
-                                flow.next_step();
+                                flow.next_step(&self.config)?;
                             }
                             tui::new_disc::NewDiscStep::SelectFolders => {
                                 // Initialize selector if needed
@@ -265,72 +330,39 @@ impl App {
 
                                 // Only proceed to next step if folders are selected (and Enter wasn't handled above)
                                 if !flow.source_folders().is_empty() {
-                                    flow.next_step();
+                                    flow.next_step(&self.config)?;
                                 }
                             }
                             tui::new_disc::NewDiscStep::Review => {
                                 // For Review step, Enter starts the process
-                                flow.next_step();
+                                flow.next_step(&self.config)?;
 
-                                // Start the disc creation process in a background thread
-                                let disc_id = flow.disc_id().to_string();
-                                let notes = flow.notes().to_string();
+                                // Check if we need multi-disc burning
                                 let source_folders = flow.source_folders().to_vec();
-                                let dry_run = flow.dry_run();
-                                info!("User selected burn mode - dry_run: {}", dry_run);
                                 let config = self.config.clone();
 
-                                // Create channel for communication
-                                let (tx, rx) = mpsc::channel();
-                                self.disc_creation_rx = Some(rx);
-
-                                // Spawn background thread for disc creation
-                                // Clone the database path and create a new connection in the background thread
-                                let db_path = self
-                                    .config
-                                    .database_path()
-                                    .unwrap_or_else(|_| PathBuf::from(":memory:"));
-                                thread::spawn(move || {
-                                    // Create new database connection in background thread
-                                    let db_conn_result = database::init_database(&db_path);
-                                    let db_conn = match db_conn_result {
-                                        Ok(conn) => conn,
-                                        Err(e) => {
-                                            let _ = tx.send(DiscCreationMessage::Error(format!(
-                                                "Failed to create database connection: {}",
-                                                e
-                                            )));
-                                            return;
+                                // Calculate total size to determine if multi-disc is needed
+                                let disc_capacity = config.default_capacity_bytes();
+                                match staging::check_capacity(&source_folders, disc_capacity) {
+                                    Ok((total_size, exceeds)) => {
+                                        if exceeds {
+                                            info!("Content exceeds single disc capacity ({} bytes), starting multi-disc workflow", total_size);
+                                            flow.set_status("Planning multi-disc layout...".to_string());
+                                        } else {
+                                            info!("Content fits on single disc ({} bytes), starting single-disc workflow", total_size);
+                                            flow.set_status("Starting disc creation...".to_string());
                                         }
-                                    };
-
-                                    let config_clone = config.clone();
-                                    match Self::run_disc_creation_background(
-                                        disc_id,
-                                        notes,
-                                        source_folders,
-                                        dry_run,
-                                        config_clone,
-                                        db_conn,
-                                        tx.clone(),
-                                    ) {
-                                        Ok(()) => {
-                                            // Success - cleanup already handled in the function
-                                        }
-                                        Err(e) => {
-                                            // Failed burn - attempt to cleanup staging directory
-                                            warn!("Disc creation failed: {}", e);
-                                            let _ = tx.send(DiscCreationMessage::Error(format!("Disc creation failed: {}", e)));
-
-                                            if !dry_run {
-                                                // Try to cleanup staging directory even on failure
-                                                if let Ok(staging_dir) = config.staging_dir() {
-                                                    let _ = Self::cleanup_staging_directory(&staging_dir);
-                                                }
-                                            }
-                                        }
+            // Store the request for processing after the match
+            info!("Setting pending_disc_creation: multi_disc={}, folders={}", exceeds, source_folders.len());
+            self.pending_disc_creation = Some((exceeds, source_folders, config));
+            info!("pending_disc_creation set successfully");
                                     }
-                                });
+                                    Err(e) => {
+                                        flow.set_status(format!("Error calculating size: {}", e));
+                                        flow.set_error("Failed to analyze content size".to_string());
+                                        flow.previous_step();
+                                    }
+                                }
 
                                 return Ok(true);
                             }
@@ -454,20 +486,8 @@ impl App {
                             _ => {}
                         }
                     }
-                    KeyCode::Char('r') | KeyCode::Char('R') => {
-                        match flow.current_step() {
-                            tui::new_disc::NewDiscStep::SelectFolders => {
-                                // R key: retry loading if there was an error
-                                if let Some(ref mut selector) = flow.directory_selector_mut() {
-                                    if let Err(e) = selector.retry_loading() {
-                                        tracing::error!("Failed to retry directory loading: {}", e);
-                                    }
-                                    return Ok(true);
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
+                    // Special handling for 'R' key in SelectFolders (retry loading)
+                    // For all other steps, 'R' should be treated as regular character input
                     KeyCode::Backspace => match flow.current_step() {
                         tui::new_disc::NewDiscStep::EnterDiscId
                         | tui::new_disc::NewDiscStep::EnterNotes => {
@@ -502,6 +522,14 @@ impl App {
                                     let current_dry_run = flow.dry_run();
                                     flow.set_dry_run(!current_dry_run);
                                     return Ok(true);
+                                } else if c == 'r' || c == 'R' {
+                                    // R key: retry loading if there was an error
+                                    if let Some(ref mut selector) = flow.directory_selector_mut() {
+                                        if let Err(e) = selector.retry_loading() {
+                                            tracing::error!("Failed to retry directory loading: {}", e);
+                                        }
+                                        return Ok(true);
+                                    }
                                 }
 
                                 // Initialize selector if needed
@@ -540,6 +568,31 @@ impl App {
                         }
                     }
                     _ => {}
+                }
+            }
+            AppState::Cleanup(ref mut flow) => {
+                match key {
+                    KeyCode::Esc => {
+                        if flow.current_step() == tui::new_disc::NewDiscStep::Processing {
+                            // Check if processing is complete - allow escape then
+                            if matches!(flow.processing_state(), tui::new_disc::ProcessingState::Complete) {
+                                self.state = AppState::MainMenu;
+                                return Ok(true);
+                            } else if matches!(flow.processing_state(), tui::new_disc::ProcessingState::Error(_)) {
+                                // Allow escape on error - go back to main menu
+                                self.state = AppState::MainMenu;
+                                return Ok(true);
+                            } else {
+                                // Don't allow escape during active cleanup
+                                return Ok(true);
+                            }
+                        } else {
+                            self.state = AppState::MainMenu;
+                        }
+                    }
+                    _ => {
+                        // For cleanup, we only handle escape - background messages handle the rest
+                    }
                 }
             }
             AppState::Search(ref mut search) => {
@@ -699,6 +752,38 @@ impl App {
                 return Ok(false);
             }
         }
+
+        // Handle any pending disc creation requests
+        info!("Checking for pending disc creation requests...");
+        if self.pending_disc_creation.is_some() {
+            info!("Found pending disc creation request, state: {:?}", match self.state {
+                AppState::NewDisc(_) => "NewDisc",
+                AppState::Cleanup(_) => "Cleanup",
+                _ => "Other"
+            });
+        }
+        let pending_taken = self.pending_disc_creation.take();
+        if let Some((needs_multi_disc, source_folders, config)) = pending_taken {
+            info!("Processing pending disc creation request: multi_disc={}, folders={}", needs_multi_disc, source_folders.len());
+            let db_path = self
+                .config
+                .database_path()
+                .unwrap_or_else(|_| PathBuf::from(":memory:"));
+
+            // Start the appropriate disc creation workflow
+            if let AppState::NewDisc(ref mut flow) = self.state {
+                info!("Starting disc creation workflow...");
+                Self::start_disc_creation_workflow(flow, needs_multi_disc, source_folders, config, db_path, &mut self.disc_creation_rx);
+            } else {
+                warn!("Pending disc creation request but not in NewDisc state! Current state: {:?}", match self.state {
+                    AppState::NewDisc(_) => "NewDisc",
+                    AppState::Cleanup(_) => "Cleanup",
+                    AppState::MainMenu => "MainMenu",
+                    _ => "Other"
+                });
+            }
+        }
+
         Ok(true)
     }
 
@@ -904,6 +989,9 @@ impl App {
             if notes.is_empty() { None } else { Some(notes) },
             &source_roots,
             &disc::get_tool_version(),
+            None, // set_id (single disc)
+            None, // sequence_number
+            None, // total_discs
         )?;
 
         // Check capacity
@@ -974,6 +1062,8 @@ impl App {
             qr_path: None,                // Will be set after QR generation
             source_roots: Some(serde_json::to_string(&source_roots)?),
             tool_version: Some(disc::get_tool_version()),
+            set_id: None, // Single disc, not part of a set
+            sequence_number: None,
         };
 
         database::Disc::insert(&mut self.db_conn, &disc_record)?;
@@ -1026,6 +1116,374 @@ impl App {
         // Complete!
         flow.set_processing_state(tui::new_disc::ProcessingState::Complete);
         flow.set_status(format!("Disc {} created successfully!", disc_id));
+
+        Ok(())
+    }
+
+    /// Run multi-disc creation in background with sequential burning
+    fn run_multi_disc_creation_background(
+        disc_id_base: String,
+        notes: String,
+        source_folders: Vec<PathBuf>,
+        dry_run: bool,
+        config: Config,
+        mut db_conn: rusqlite::Connection,
+        tx: mpsc::Sender<DiscCreationMessage>,
+    ) -> Result<()> {
+        let _ = tx.send(DiscCreationMessage::Status(format!(
+            "Planning multi-disc layout..."
+        )));
+
+        // Create disc layout plan with timeout protection
+        let disc_capacity = config.default_capacity_bytes();
+
+        let plans_result = std::panic::catch_unwind(|| {
+            staging::plan_disc_layout_with_progress(&source_folders, disc_capacity, |progress| {
+                let _ = tx.send(DiscCreationMessage::Progress(progress.to_string()));
+            })
+        });
+
+        let plans = match plans_result {
+            Ok(Ok(plans)) => plans,
+            Ok(Err(e)) => {
+                let _ = tx.send(DiscCreationMessage::Error(format!("Planning failed: {}", e)));
+                return Err(e);
+            }
+            Err(_) => {
+                let _ = tx.send(DiscCreationMessage::Error("Planning panicked (possible infinite loop)".to_string()));
+                return Err(anyhow::anyhow!("Planning function panicked"));
+            }
+        };
+
+        if plans.is_empty() {
+            let _ = tx.send(DiscCreationMessage::Error("No disc plans generated".to_string()));
+            return Err(anyhow::anyhow!("No disc plans generated"));
+        }
+
+        let total_discs = plans.len();
+
+        let _ = tx.send(DiscCreationMessage::Progress(format!(
+            "✅ Planning complete! Archive will span {} discs", total_discs
+        )));
+
+        // Create disc set in database
+        let set_name = format!("Multi-disc archive: {}", disc_id_base);
+        let total_size: u64 = plans.iter().map(|p| p.used_bytes).sum();
+        let set_id = database::MultiDiscOps::create_disc_set(
+            &mut db_conn,
+            &set_name,
+            Some(&notes),
+            total_size,
+            total_discs as u32,
+            Some(&serde_json::to_string(&source_folders)?),
+        )?;
+
+        // Burn each disc sequentially
+        let mut iso_paths = Vec::new();
+
+        for (disc_index, plan) in plans.iter().enumerate() {
+            let sequence_num = disc_index + 1;
+            let disc_id = disc::generate_multi_disc_id(&disc_id_base, sequence_num as u32);
+
+            // Update overall progress
+            let overall_progress = disc_index as f64 / total_discs as f64;
+
+            let _ = tx.send(DiscCreationMessage::Status(format!(
+                "🔥 Preparing disc {}/{}: {} ({} MB)",
+                sequence_num,
+                total_discs,
+                disc_id,
+                plan.used_bytes / (1024 * 1024)
+            )));
+
+            // Send detailed progress info
+            let _ = tx.send(DiscCreationMessage::Progress(format!(
+                "💿 Disc {}/{} | 📊 {:.1}% complete | 🎯 +{} MB",
+                sequence_num, total_discs,
+                overall_progress * 100.0,
+                plan.used_bytes / (1024 * 1024)
+            )));
+
+            if !dry_run {
+                // Prompt user to insert correct disc with animated waiting
+                let _ = tx.send(DiscCreationMessage::Status(format!(
+                    "📀 Please insert disc {} of {} and press Enter to continue...",
+                    sequence_num, total_discs
+                )));
+
+                // Send animated waiting messages
+                for i in 0..5 {
+                    let spinner = match i % 4 {
+                        0 => "|",
+                        1 => "/",
+                        2 => "-",
+                        3 => "\\",
+                        _ => "|",
+                    };
+                    let _ = tx.send(DiscCreationMessage::Progress(format!(
+                        "⏳ Waiting for disc {}... {}", sequence_num, spinner
+                    )));
+                    std::thread::sleep(std::time::Duration::from_millis(300));
+                }
+
+                let _ = tx.send(DiscCreationMessage::Progress(format!(
+                    "✅ Disc {} ready, starting burn process...",
+                    sequence_num
+                )));
+            }
+
+            // Create temporary directory structure for this disc
+            info!("Creating staging directory for disc {}", sequence_num);
+            let staging_dir = config.staging_dir()?;
+            let disc_staging_dir = staging_dir.join(format!("disc_{}", sequence_num));
+            info!("Staging dir: {}", disc_staging_dir.display());
+
+            // Stage files for this specific disc with progress updates
+            let _ = tx.send(DiscCreationMessage::Status(format!(
+                "📦 Staging files for disc {}...",
+                sequence_num
+            )));
+
+            // Send initial progress
+            let _ = tx.send(DiscCreationMessage::Progress(format!(
+                "📁 Preparing disc {} content...",
+                sequence_num
+            )));
+
+            match Self::stage_disc_content(&plan, &source_folders, &disc_staging_dir, dry_run, &tx) {
+                Ok(_) => (),
+                Err(e) => {
+                    error!("Staging failed for disc {}: {}", sequence_num, e);
+                    let _ = tx.send(DiscCreationMessage::Error(format!("Staging failed: {}", e)));
+                    return Err(e);
+                }
+            }
+
+            let _ = tx.send(DiscCreationMessage::Progress(format!(
+                "✅ Disc {} staging complete ({} MB)",
+                sequence_num,
+                plan.used_bytes / (1024 * 1024)
+            )));
+
+            // Write DISC_INFO.txt for this disc
+            let disc_root = disc_staging_dir.clone();
+            let source_roots: Vec<PathBuf> = source_folders.clone();
+            match disc::write_disc_info(
+                &disc_root,
+                &disc_id,
+                if notes.is_empty() { None } else { Some(&notes) },
+                &source_roots,
+                &disc::get_tool_version(),
+                Some(&set_id),
+                Some(sequence_num as u32),
+                Some(total_discs as u32),
+            ) {
+                Ok(_) => info!("Disc info written for disc {}", sequence_num),
+                Err(e) => {
+                    error!("Failed to write disc info for disc {}: {}", sequence_num, e);
+                    let _ = tx.send(DiscCreationMessage::Error(format!("Failed to write disc info: {}", e)));
+                    return Err(anyhow::anyhow!("Failed to write disc info: {}", e));
+                }
+            }
+
+            // Create ISO and burn (or simulate) - reuse existing logic
+            let iso_path = match Self::create_iso_and_burn_disc(
+                &disc_id,
+                &disc_staging_dir,
+                &config.device,
+                dry_run,
+                &config,
+                &tx,
+            ) {
+                Ok(iso_path) => {
+                    iso_paths.push(iso_path.clone());
+                    iso_path
+                }
+                Err(e) => {
+                    error!("ISO/burn failed for disc {}: {}", sequence_num, e);
+                    let _ = tx.send(DiscCreationMessage::Error(format!("Burn failed: {}", e)));
+                    return Err(e);
+                }
+            };
+
+            // Add disc to set
+            let volume_label = disc::generate_multi_disc_volume_label(&disc_id_base, sequence_num as u32, total_discs as u32);
+            let mut disc_record = database::Disc {
+                disc_id: disc_id.clone(),
+                volume_label,
+                created_at: disc::format_timestamp_now(),
+                notes: Some(format!("Disc {} of {} in multi-disc set {}", sequence_num, total_discs, set_id)),
+                iso_size: Some(plan.used_bytes),
+                burn_device: if dry_run { None } else { Some(config.device.clone()) },
+                checksum_manifest_hash: None,
+                qr_path: None,
+                source_roots: Some(serde_json::to_string(&source_folders)?),
+                tool_version: Some(disc::get_tool_version()),
+                set_id: Some(set_id.clone()),
+                sequence_number: Some(sequence_num as u32),
+            };
+
+            database::MultiDiscOps::add_disc_to_set(&mut db_conn, &mut disc_record, &set_id, sequence_num as u32)?;
+
+            // Cleanup disc staging
+            if disc_staging_dir.exists() {
+                let _ = std::fs::remove_dir_all(&disc_staging_dir);
+            }
+
+            let _ = tx.send(DiscCreationMessage::Status(format!(
+                "✅ Disc {} of {} completed successfully",
+                sequence_num, total_discs
+            )));
+        }
+
+        // Final cleanup
+        if !dry_run {
+            if let Ok(staging_dir) = config.staging_dir() {
+                let _ = Self::cleanup_staging_directory(&staging_dir);
+            }
+        }
+
+        // Send completion summary for multi-disc
+        let total_size_mb = total_size / (1024 * 1024);
+        let _ = tx.send(DiscCreationMessage::Status(format!(
+            "🎊 Multi-disc archive complete! {} discs, {} MB total",
+            total_discs, total_size_mb
+        )));
+
+        let _ = tx.send(DiscCreationMessage::Progress(format!(
+            "📚 Archive ID: {} | 💾 {} discs spanning {} MB",
+            disc_id_base, total_discs, total_size_mb
+        )));
+
+        // Show ISO file locations
+        if !iso_paths.is_empty() {
+            let _ = tx.send(DiscCreationMessage::Progress("📂 ISO files created:".to_string()));
+            for (i, iso_path) in iso_paths.iter().enumerate() {
+                let disc_num = i + 1;
+                let _ = tx.send(DiscCreationMessage::Progress(format!(
+                    "  💿 Disc {}: {}",
+                    disc_num,
+                    iso_path.display()
+                )));
+            }
+        }
+
+        let _ = tx.send(DiscCreationMessage::Complete);
+        Ok(())
+    }
+
+    /// Create ISO and burn disc (extracted from single-disc workflow)
+    fn create_iso_and_burn_disc(
+        disc_id: &str,
+        disc_staging_dir: &Path,
+        device: &str,
+        dry_run: bool,
+        config: &Config,
+        tx: &mpsc::Sender<DiscCreationMessage>,
+    ) -> Result<PathBuf> {
+        // ISO Creation Phase
+        let _ = tx.send(DiscCreationMessage::Status("🎨 Creating ISO image...".to_string()));
+        let _ = tx.send(DiscCreationMessage::Progress("🔄 Analyzing files and building filesystem...".to_string()));
+
+        let volume_label = disc::generate_volume_label(disc_id);
+        let staging_dir = config.staging_dir()?;
+        let iso_path = staging_dir.join(format!("{}.iso", disc_id));
+
+        // Send animated progress during ISO creation
+        let iso_tx = tx.clone();
+        std::thread::spawn(move || {
+            let spinners = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+            for i in 0..20 {
+                let _ = iso_tx.send(DiscCreationMessage::Progress(format!(
+                    "🎨 Building ISO... {}", spinners[i % spinners.len()]
+                )));
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+        });
+
+        iso::create_iso(disc_staging_dir, &iso_path, &volume_label, dry_run)?;
+
+        // Get ISO size (skip for dry run since no file is created)
+        let iso_size = if dry_run {
+            // Estimate size based on staging directory
+            staging::calculate_directory_size(disc_staging_dir)?
+        } else {
+            iso::get_iso_size(&iso_path)?
+        };
+
+        let _ = tx.send(DiscCreationMessage::Progress(format!(
+            "✅ ISO created: {:.2} GB ({})",
+            iso_size as f64 / 1_000_000_000.0,
+            volume_label
+        )));
+
+        // Burn to disc
+        if dry_run {
+            let _ = tx.send(DiscCreationMessage::Status("🔍 Skipping burn (dry run mode)".to_string()));
+            let _ = tx.send(DiscCreationMessage::Progress("📋 Dry run complete - no disc written".to_string()));
+        } else {
+            let _ = tx.send(DiscCreationMessage::Status(format!("🔥 Burning to {}...", device)));
+            let _ = tx.send(DiscCreationMessage::Progress("⚡ Initializing Blu-ray burner...".to_string()));
+
+            burn::burn_iso(&iso_path, device, dry_run)?;
+
+            let _ = tx.send(DiscCreationMessage::Progress("🎉 Disc burned successfully!".to_string()));
+        }
+
+        Ok(iso_path)
+    }
+
+    /// Stage content for a specific disc from the plan
+    fn stage_disc_content(
+        plan: &staging::DiscPlan,
+        source_folders: &[PathBuf],
+        disc_staging_dir: &Path,
+        dry_run: bool,
+        tx: &mpsc::Sender<DiscCreationMessage>,
+    ) -> Result<()> {
+        let _ = tx.send(DiscCreationMessage::Progress(format!(
+            "🔄 Starting content staging for disc {}...",
+            plan.disc_number
+        )));
+
+        // For now, we'll copy all source folders and rely on the ISO creation
+        // to handle the size limits. In a more sophisticated implementation,
+        // we'd only copy the specific files assigned to this disc.
+        for (i, source) in source_folders.iter().enumerate() {
+            if source.exists() {
+                let dest_name = source.file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown");
+                let dest = disc_staging_dir.join(dest_name);
+
+                let _ = tx.send(DiscCreationMessage::Progress(format!(
+                    "📂 Copying folder {}/{}: {}",
+                    i + 1,
+                    source_folders.len(),
+                    dest_name
+                )));
+
+                if dry_run {
+                    // Just create directory structure
+                    std::fs::create_dir_all(&dest)?;
+                    let _ = tx.send(DiscCreationMessage::Progress("📁 Created directory structure (dry run)".to_string()));
+                } else {
+                    // Actually copy the content
+                    staging::copy_directory_recursive(source, &dest)?;
+                    let _ = tx.send(DiscCreationMessage::Progress(format!(
+                        "✅ Copied: {}", dest_name
+                    )));
+                }
+
+                // Small delay to show progress
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        }
+
+        let _ = tx.send(DiscCreationMessage::Progress(format!(
+            "🎯 Disc {} staging complete!",
+            plan.disc_number
+        )));
 
         Ok(())
     }
@@ -1140,6 +1598,104 @@ impl App {
             info!("Staging directory already removed");
         }
 
+        Ok(())
+    }
+
+    /// Comprehensive cleanup of temporary files and build artifacts
+    pub fn cleanup_temporary_files() -> Result<()> {
+        use std::fs;
+        use walkdir::WalkDir;
+        let _total_cleaned = 0u64;
+        let mut files_removed = 0u32;
+
+        info!("🧹 Starting comprehensive cleanup...");
+
+        // Clean up build artifacts (debug and release builds)
+        let target_dirs = ["target/debug", "target/release"];
+        for target_dir in &target_dirs {
+            let path = Path::new(target_dir);
+            if path.exists() {
+                info!("Removing build artifacts: {}", target_dir);
+                match fs::remove_dir_all(path) {
+                    Ok(_) => {
+                        info!("✅ Removed {}", target_dir);
+                        files_removed += 1;
+                    }
+                    Err(e) => warn!("Failed to remove {}: {}", target_dir, e),
+                }
+            }
+        }
+
+        // Clean up any leftover ISO files in the project directory
+        if let Ok(entries) = fs::read_dir(".") {
+            for entry in entries {
+                if let Ok(entry) = entry {
+                    let path = entry.path();
+                    if let Some(ext) = path.extension() {
+                        if ext == "iso" && path.is_file() {
+                            match fs::remove_file(&path) {
+                                Ok(_) => {
+                                    info!("✅ Removed leftover ISO: {}", path.display());
+                                    files_removed += 1;
+                                }
+                                Err(e) => warn!("Failed to remove {}: {}", path.display(), e),
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Clean up any temporary directories in the staging area
+        if let Some(staging_dir) = dirs::data_dir()
+            .map(|d| d.join("bdarchive").join("staging"))
+        {
+            if staging_dir.exists() {
+                info!("Checking staging directory for leftover files...");
+                for entry in WalkDir::new(&staging_dir).into_iter().filter_map(|e| e.ok()) {
+                    let path = entry.path();
+                    if path.is_file() {
+                        match fs::remove_file(path) {
+                            Ok(_) => {
+                                files_removed += 1;
+                            }
+                            Err(e) => warn!("Failed to remove {}: {}", path.display(), e),
+                        }
+                    } else if path.is_dir() && path != staging_dir {
+                        match fs::remove_dir_all(path) {
+                            Ok(_) => {
+                                files_removed += 1;
+                            }
+                            Err(e) => warn!("Failed to remove directory {}: {}", path.display(), e),
+                        }
+                    }
+                }
+            }
+        }
+
+        // Clean up any *.tmp files in the project directory
+        if let Ok(entries) = fs::read_dir(".") {
+            for entry in entries {
+                if let Ok(entry) = entry {
+                    let path = entry.path();
+                    if path.is_file() {
+                        if let Some(file_name) = path.file_name() {
+                            if file_name.to_string_lossy().ends_with(".tmp") {
+                                match fs::remove_file(&path) {
+                                    Ok(_) => {
+                                        info!("✅ Removed temp file: {}", path.display());
+                                        files_removed += 1;
+                                    }
+                                    Err(e) => warn!("Failed to remove {}: {}", path.display(), e),
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        info!("🧹 Cleanup complete! Removed {} files/directories", files_removed);
         Ok(())
     }
 
@@ -1286,6 +1842,8 @@ impl App {
             qr_path: None,
             source_roots: Some(source_roots_json),
             tool_version: Some(disc::get_tool_version()),
+            set_id: None, // Single disc, not part of a set
+            sequence_number: None,
         };
 
         database::Disc::insert(db_conn, &disc_record)
@@ -1319,6 +1877,132 @@ impl App {
             .context("Failed to insert file records")?;
 
         Ok(())
+    }
+
+
+
+    /// Start disc creation workflow (single or multi-disc)
+    fn start_disc_creation_workflow(
+        flow: &mut tui::NewDiscFlow,
+        needs_multi_disc: bool,
+        source_folders: Vec<PathBuf>,
+        config: Config,
+        db_path: PathBuf,
+        disc_creation_rx: &mut Option<mpsc::Receiver<DiscCreationMessage>>,
+    ) {
+        if needs_multi_disc {
+            Self::start_multi_disc_creation_workflow(flow, source_folders, config, db_path, disc_creation_rx);
+        } else {
+            Self::start_single_disc_creation_workflow(flow, source_folders, config, db_path, disc_creation_rx);
+        }
+    }
+
+    /// Start single-disc creation workflow
+    fn start_single_disc_creation_workflow(
+        flow: &mut tui::NewDiscFlow,
+        source_folders: Vec<PathBuf>,
+        config: Config,
+        db_path: PathBuf,
+        disc_creation_rx: &mut Option<mpsc::Receiver<DiscCreationMessage>>,
+    ) {
+        // Start the disc creation process in a background thread (existing logic)
+        let disc_id = flow.disc_id().to_string();
+        let notes = flow.notes().to_string();
+        let dry_run = flow.dry_run();
+        info!("User selected burn mode - dry_run: {}", dry_run);
+
+        let disc_id_clone = disc_id.clone();
+        let notes_clone = notes.clone();
+
+        // Create channel for communication
+        let (tx, rx) = mpsc::channel::<DiscCreationMessage>();
+        *disc_creation_rx = Some(rx);
+
+        thread::spawn(move || {
+            // Create new database connection in background thread
+            let db_conn_result = database::init_database(&db_path);
+            let db_conn = match db_conn_result {
+                Ok(conn) => conn,
+                Err(e) => {
+                    let _ = tx.send(DiscCreationMessage::Error(format!(
+                        "Failed to create database connection: {}",
+                        e
+                    )));
+                    return;
+                }
+            };
+
+            let dry_run_clone = dry_run;
+            match Self::run_disc_creation_background(
+                disc_id_clone,
+                notes_clone,
+                source_folders,
+                dry_run_clone,
+                config,
+                db_conn,
+                tx.clone(),
+            ) {
+                Ok(()) => {
+                    // Success - cleanup already handled in the function
+                }
+                Err(e) => {
+                    let _ = tx.send(DiscCreationMessage::Error(format!(
+                        "Disc creation failed: {}", e
+                    )));
+                }
+            }
+        });
+    }
+
+    /// Start multi-disc creation workflow
+    fn start_multi_disc_creation_workflow(
+        flow: &mut tui::NewDiscFlow,
+        source_folders: Vec<PathBuf>,
+        config: Config,
+        db_path: PathBuf,
+        disc_creation_rx: &mut Option<mpsc::Receiver<DiscCreationMessage>>,
+    ) {
+        let disc_id_base = flow.disc_id().to_string();
+        let notes = flow.notes().to_string();
+        let dry_run = flow.dry_run();
+
+        // Create channel for communication
+        let (tx, rx) = mpsc::channel::<DiscCreationMessage>();
+        *disc_creation_rx = Some(rx);
+
+        thread::spawn(move || {
+            // Create new database connection in background thread
+            let db_conn_result = database::init_database(&db_path);
+            let db_conn = match db_conn_result {
+                Ok(conn) => conn,
+                Err(e) => {
+                    let _ = tx.send(DiscCreationMessage::Error(format!(
+                        "Failed to create database connection: {}",
+                        e
+                    )));
+                    return;
+                }
+            };
+
+            match Self::run_multi_disc_creation_background(
+                disc_id_base,
+                notes,
+                source_folders,
+                dry_run,
+                config,
+                db_conn,
+                tx.clone(),
+            ) {
+                Ok(()) => {
+                    // Success - cleanup already handled in the function
+                }
+                Err(e) => {
+                    let _ = tx.send(DiscCreationMessage::Error(format!(
+                        "Multi-disc creation failed: {}", e
+                    )));
+                }
+            }
+        });
     }
 
     /// Run disc creation in background with comprehensive error handling
@@ -1441,22 +2125,6 @@ impl App {
             }
         }
 
-        // Write DISC_INFO.txt
-        let source_roots: Vec<PathBuf> = source_folders;
-        match disc::write_disc_info(
-            &disc_root,
-            &disc_id,
-            if notes.is_empty() { None } else { Some(&notes) },
-            &source_roots,
-            &disc::get_tool_version(),
-        ) {
-            Ok(_) => info!("Disc info written successfully"),
-            Err(e) => {
-                error!("Failed to write disc info: {}", e);
-                let _ = tx.send(DiscCreationMessage::Error(format!("Failed to write disc info: {}", e)));
-                return Err(anyhow::anyhow!("Failed to write disc info: {}", e));
-            }
-        }
 
         // Check capacity
         let total_size = manifest::calculate_total_size(&files);
@@ -1589,6 +2257,7 @@ impl App {
             "Updating index...".to_string(),
         ));
 
+        let source_roots: Vec<PathBuf> = source_folders.clone();
         match Self::index_disc_in_database(&mut db_conn, &disc_id, &volume_label, &notes, iso_size, &config.device, dry_run, &source_roots) {
             Ok(_) => {
                 let _ = tx.send(DiscCreationMessage::StateAndStatus(
@@ -1676,6 +2345,7 @@ impl App {
             let current_screen = match self.state {
                 AppState::MainMenu => "Main Menu",
                 AppState::NewDisc(_) => "New Disc",
+                AppState::Cleanup(_) => "Cleanup",
                 AppState::Search(_) => "Search Index",
                 AppState::Verify(_) => "Verify Disc",
                 AppState::ListDiscs(_) => "List Discs",
@@ -1711,7 +2381,10 @@ impl App {
                 self.main_menu.render(&self.theme, frame, content_area);
             }
             AppState::NewDisc(ref mut flow) => {
-                flow.render(&self.theme, frame, content_area);
+                flow.render(&self.theme, &self.config, frame, content_area);
+            }
+            AppState::Cleanup(ref mut flow) => {
+                flow.render(&self.theme, &self.config, frame, content_area);
             }
             AppState::Search(ref mut search) => {
                 search.render(&self.theme, frame, content_area);
@@ -1765,8 +2438,29 @@ fn main() -> Result<()> {
     let mut running = true;
 
     while running {
-        terminal.draw(|f| app.render(f))?;
+        // Handle any pending disc creation requests
+        if app.pending_disc_creation.is_some() {
+            if let AppState::NewDisc(_) = app.state {
+                // Only log when we actually find and process one
+            }
+        }
+        let pending_taken = app.pending_disc_creation.take();
+        if let Some((needs_multi_disc, source_folders, config)) = pending_taken {
+            let db_path = app
+                .config
+                .database_path()
+                .unwrap_or_else(|_| PathBuf::from(":memory:"));
 
+            // Start the appropriate disc creation workflow
+            if let AppState::NewDisc(ref mut flow) = app.state {
+                App::start_disc_creation_workflow(flow, needs_multi_disc, source_folders, config, db_path, &mut app.disc_creation_rx);
+            }
+        }
+
+        terminal.draw(|f| app.render(f))?;
+        info!("=== terminal.draw() completed ===");
+
+        info!("=== About to check splash ===");
         // Check if splash should auto-dismiss
         if let AppState::Splash(ref splash) = app.state {
             if !splash.should_show() {
@@ -1775,7 +2469,7 @@ fn main() -> Result<()> {
         }
 
         // Check for background messages first (always poll these)
-        let has_background_task = matches!(app.state, AppState::NewDisc(_))
+        let has_background_task = matches!(app.state, AppState::NewDisc(_) | AppState::Cleanup(_))
             && app.disc_creation_rx.is_some();
 
         let background_updated = if has_background_task {

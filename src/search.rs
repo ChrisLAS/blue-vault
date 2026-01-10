@@ -114,6 +114,8 @@ mod tests {
             qr_path: None,
             source_roots: None,
             tool_version: None,
+            set_id: None,
+            sequence_number: None,
         };
         crate::database::Disc::insert(&mut conn, &disc)?;
 
