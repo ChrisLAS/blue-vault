@@ -7,6 +7,7 @@ pub enum ThemeName {
     Phosphor,
     Amber,
     Mono,
+    HotDog,
 }
 
 /// Color palette for phosphor green theme
@@ -172,6 +173,65 @@ impl MonoColors {
     }
 }
 
+/// Color palette for HotDog theme
+#[derive(Debug, Clone, Copy)]
+pub struct HotDogColors {
+    pub background: Color,
+    pub primary: Color,
+    pub secondary: Color,
+    pub dim: Color,
+    pub accent_bg: Color,
+    pub accent_fg: Color,
+    pub border: Color,
+    pub warning: Color,
+    pub error: Color,
+    pub success: Color,
+}
+
+impl HotDogColors {
+    pub fn new() -> Self {
+        let supports_truecolor = env::var("COLORTERM")
+            .map(|v| v == "truecolor" || v == "24bit")
+            .unwrap_or(false);
+
+        if supports_truecolor {
+            Self::truecolor()
+        } else {
+            Self::ansi_fallback()
+        }
+    }
+
+    fn truecolor() -> Self {
+        Self {
+            background: Color::Rgb(0xFF, 0xFF, 0x00),
+            primary: Color::Rgb(0xFF, 0x00, 0x00),
+            secondary: Color::Rgb(0x00, 0x00, 0x00),
+            dim: Color::Rgb(0x80, 0x80, 0x80),
+            accent_bg: Color::Rgb(0xFF, 0x00, 0x00),
+            accent_fg: Color::Rgb(0x00, 0x00, 0x00),
+            border: Color::Rgb(0x00, 0x00, 0x00),
+            warning: Color::Rgb(0xFF, 0x8C, 0x00),
+            error: Color::Rgb(0x8B, 0x00, 0x00),
+            success: Color::Rgb(0x00, 0x64, 0x00),
+        }
+    }
+
+    fn ansi_fallback() -> Self {
+        Self {
+            background: Color::Indexed(11),
+            primary: Color::Indexed(9),
+            secondary: Color::Indexed(0),
+            dim: Color::Indexed(8),
+            accent_bg: Color::Indexed(9),
+            accent_fg: Color::Indexed(0),
+            border: Color::Indexed(0),
+            warning: Color::Indexed(3),
+            error: Color::Indexed(1),
+            success: Color::Indexed(2),
+        }
+    }
+}
+
 /// Theme system
 #[derive(Debug, Clone)]
 pub struct Theme {
@@ -184,6 +244,7 @@ pub enum ThemeColors {
     Phosphor(PhosphorColors),
     Amber(AmberColors),
     Mono(MonoColors),
+    HotDog(HotDogColors),
 }
 
 impl Theme {
@@ -192,6 +253,7 @@ impl Theme {
             ThemeName::Phosphor => ThemeColors::Phosphor(PhosphorColors::new()),
             ThemeName::Amber => ThemeColors::Amber(AmberColors::new()),
             ThemeName::Mono => ThemeColors::Mono(MonoColors::new()),
+            ThemeName::HotDog => ThemeColors::HotDog(HotDogColors::new()),
         };
         Self { name, colors }
     }
@@ -205,6 +267,7 @@ impl Theme {
             match theme_str.to_lowercase().as_str() {
                 "amber" => Self::new(ThemeName::Amber),
                 "mono" => Self::new(ThemeName::Mono),
+                "hotdog" => Self::new(ThemeName::HotDog),
                 _ => Self::default(),
             }
         } else {
@@ -218,6 +281,7 @@ impl Theme {
             ThemeColors::Phosphor(c) => c.background,
             ThemeColors::Amber(c) => c.background,
             ThemeColors::Mono(c) => c.background,
+            ThemeColors::HotDog(c) => c.background,
         }
     }
 
@@ -227,6 +291,7 @@ impl Theme {
             ThemeColors::Phosphor(c) => c.primary,
             ThemeColors::Amber(c) => c.primary,
             ThemeColors::Mono(c) => c.primary,
+            ThemeColors::HotDog(c) => c.primary,
         }
     }
 
@@ -236,6 +301,7 @@ impl Theme {
             ThemeColors::Phosphor(c) => c.secondary,
             ThemeColors::Amber(c) => c.secondary,
             ThemeColors::Mono(c) => c.secondary,
+            ThemeColors::HotDog(c) => c.secondary,
         }
     }
 
@@ -245,6 +311,7 @@ impl Theme {
             ThemeColors::Phosphor(c) => c.dim,
             ThemeColors::Amber(c) => c.dim,
             ThemeColors::Mono(c) => c.dim,
+            ThemeColors::HotDog(c) => c.dim,
         }
     }
 
@@ -254,6 +321,7 @@ impl Theme {
             ThemeColors::Phosphor(c) => c.accent_bg,
             ThemeColors::Amber(c) => c.accent_bg,
             ThemeColors::Mono(c) => c.accent_bg,
+            ThemeColors::HotDog(c) => c.accent_bg,
         }
     }
 
@@ -263,6 +331,7 @@ impl Theme {
             ThemeColors::Phosphor(c) => c.accent_fg,
             ThemeColors::Amber(c) => c.accent_fg,
             ThemeColors::Mono(c) => c.accent_fg,
+            ThemeColors::HotDog(c) => c.accent_fg,
         }
     }
 
@@ -272,6 +341,7 @@ impl Theme {
             ThemeColors::Phosphor(c) => c.border,
             ThemeColors::Amber(c) => c.border,
             ThemeColors::Mono(c) => c.border,
+            ThemeColors::HotDog(c) => c.border,
         }
     }
 
@@ -281,6 +351,7 @@ impl Theme {
             ThemeColors::Phosphor(c) => c.warning,
             ThemeColors::Amber(c) => c.warning,
             ThemeColors::Mono(c) => c.warning,
+            ThemeColors::HotDog(c) => c.warning,
         }
     }
 
@@ -290,6 +361,7 @@ impl Theme {
             ThemeColors::Phosphor(c) => c.error,
             ThemeColors::Amber(c) => c.error,
             ThemeColors::Mono(c) => c.error,
+            ThemeColors::HotDog(c) => c.error,
         }
     }
 
@@ -299,6 +371,7 @@ impl Theme {
             ThemeColors::Phosphor(c) => c.success,
             ThemeColors::Amber(c) => c.success,
             ThemeColors::Mono(c) => c.success,
+            ThemeColors::HotDog(c) => c.success,
         }
     }
 
