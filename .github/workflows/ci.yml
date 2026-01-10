@@ -1,0 +1,43 @@
+name: "Build and Test"
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+        with:
+          extra-nix-config: |
+            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+      - name: Check flake
+        run: nix flake check
+      - name: Check formatting
+        run: nix develop --command cargo fmt --all -- --check
+        # TODO: remove when passing
+      - name: Run clippy
+        continue-on-error: true
+        run: nix develop --command cargo clippy --all-targets --all-features -- -D warnings
+      - name: Run cargo audit
+        # TODO: remove when passing
+        continue-on-error: true
+        run: nix develop --command cargo audit --deny warnings
+      - name: Build and test
+        run: nix build
