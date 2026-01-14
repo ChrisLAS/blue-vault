@@ -144,8 +144,8 @@ bluevault/
 ### discs table
 ```sql
 CREATE TABLE discs (
-    disc_id TEXT PRIMARY KEY,              -- e.g., "2026-BD-ARCHIVE-001"
-    volume_label TEXT NOT NULL,            -- ISO volume label (BDARCHIVE_2026D001_OF_003)
+    disc_id TEXT PRIMARY KEY,              -- e.g., "2026-BD-ARCHIVE-1"
+    volume_label TEXT NOT NULL,            -- ISO volume label (BDARCHIVE_2026D1_OF_3)
     created_at TEXT NOT NULL,              -- ISO 8601 timestamp
     notes TEXT,                            -- User notes (includes set info for multi-disc)
     iso_size INTEGER,                      -- ISO size in bytes
@@ -211,7 +211,7 @@ BlueVault uses a greedy bin-packing algorithm to distribute files across multipl
    - Try to fit entire directories first (preserves structure)
    - Split directories at subdirectory boundaries only when necessary
    - Fill remaining space with individual files
-4. **Sequential Naming**: Generate disc IDs like `2026-BD-ARCHIVE-001`, `2026-BD-ARCHIVE-002`, etc.
+4. **Sequential Naming**: Generate disc IDs like `2026-BD-ARCHIVE-1`, `2026-BD-ARCHIVE-2`, etc.
 5. **Database Tracking**: Store set relationships using `set_id` and `sequence_number` fields
 
 ### Processing Flow

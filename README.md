@@ -51,7 +51,7 @@ BlueVault features comprehensive multi-disc archive support for large collection
 ### Automatic Splitting
 - **Smart Directory Boundaries**: Preserves folder integrity when possible, splits only when necessary
 - **Capacity-Aware Planning**: Supports 25GB, 50GB, and 100GB Blu-ray discs
-- **Sequential Naming**: Auto-generates disc IDs like `2026-BD-ARCHIVE-001`, `2026-BD-ARCHIVE-002`, etc.
+- **Sequential Naming**: Auto-generates disc IDs like `2026-BD-ARCHIVE-1`, `2026-BD-ARCHIVE-2`, etc.
 - **Database Tracking**: Links discs in multi-disc sets with proper sequencing
 
 ### User Experience
@@ -272,7 +272,7 @@ On first run, BlueVault will:
 #### Creating a New Disc (Single or Multi-Disc)
 
 1. Select "New Disc / Archive Folders" from the main menu
-2. Enter or accept the auto-generated disc ID (e.g., `2026-BD-001`), or type a custom name
+2. Enter or accept the auto-generated disc ID (e.g., `2026-BD-1`), or type a custom name
 3. Add optional notes about the archive
 4. Select source folders using:
    - **Input box**: Type full paths manually (default, always visible)

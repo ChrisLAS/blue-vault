@@ -4,11 +4,11 @@ use std::path::{Path, PathBuf};
 use tracing::debug;
 use rusqlite::params;
 
-/// Generate a disc ID in the format YYYY-BD-###.
+/// Generate a disc ID in the format YYYY-BD-#.
 pub fn generate_disc_id() -> String {
     let year = get_current_year();
     let number = get_next_disc_number(&year).unwrap_or(1);
-    format!("{:04}-BD-{:03}", year, number)
+    format!("{:04}-BD-{}", year, number)
 }
 
 /// Get current year (simplified).
@@ -26,7 +26,7 @@ fn get_current_year() -> u32 {
 }
 
 /// Get next disc number for a year (checks database if available).
-/// For now, just return None to always start from 001.
+/// For now, just return None to always start from 1.
 fn get_next_disc_number(year: &u32) -> Option<u32> {
     // Query database for existing discs with this year prefix
     let db_path = dirs::data_dir()
@@ -70,7 +70,7 @@ pub fn generate_volume_label(disc_id: &str) -> String {
 /// Generate volume label for multi-disc sets.
 /// Ensures labels fit within filesystem constraints (typically 32 chars max).
 pub fn generate_multi_disc_volume_label(base_id: &str, sequence_num: u32, total_discs: u32) -> String {
-    // For multi-disc sets, create labels like: "BDARCHIVE_2024_001_OF_003"
+    // For multi-disc sets, create labels like: "BDARCHIVE_2024_1_OF_3"
     // This clearly shows the disc position and total count
 
     // Extract year from base_id if it's in the format "YYYY-BD-XXX"
@@ -80,21 +80,21 @@ pub fn generate_multi_disc_volume_label(base_id: &str, sequence_num: u32, total_
         String::new()
     };
 
-    let label = format!("BDARCHIVE{}D{:03}_OF_{:03}", year_part, sequence_num, total_discs);
+    let label = format!("BDARCHIVE{}D{}_OF_{}", year_part, sequence_num, total_discs);
 
     // Ensure it fits within typical filesystem limits (32 chars is common)
     if label.len() > 32 {
         // Fallback to shorter format if needed
-        format!("BD{}_{:02}_{:02}", &base_id[0..4], sequence_num, total_discs)
+        format!("BD{}_{}_{}", &base_id[0..4], sequence_num, total_discs)
     } else {
         label
     }
 }
 
 /// Generate disc ID for a specific sequence in a multi-disc set.
-/// For multi-disc sets, generates IDs like "2024-BD-ARCHIVE-001", "2024-BD-ARCHIVE-002", etc.
+/// For multi-disc sets, generates IDs like "2024-BD-ARCHIVE-1", "2024-BD-ARCHIVE-2", etc.
 pub fn generate_multi_disc_id(base_id: &str, sequence_num: u32) -> String {
-    format!("{}-{:03}", base_id, sequence_num)
+    format!("{}-{}", base_id, sequence_num)
 }
 
 /// Validate that a disc ID is valid for use in filenames and volume labels.
@@ -320,8 +320,8 @@ mod tests {
     #[test]
     fn test_generate_multi_disc_id() {
         let base_id = "2024-BD-ARCHIVE";
-        assert_eq!(generate_multi_disc_id(base_id, 1), "2024-BD-ARCHIVE-001");
-        assert_eq!(generate_multi_disc_id(base_id, 15), "2024-BD-ARCHIVE-015");
+        assert_eq!(generate_multi_disc_id(base_id, 1), "2024-BD-ARCHIVE-1");
+        assert_eq!(generate_multi_disc_id(base_id, 15), "2024-BD-ARCHIVE-15");
         assert_eq!(generate_multi_disc_id(base_id, 123), "2024-BD-ARCHIVE-123");
     }
 
@@ -329,13 +329,13 @@ mod tests {
     fn test_generate_multi_disc_volume_label() {
         // Test normal case
         let label = generate_multi_disc_volume_label("2024-BD-ARCHIVE", 1, 3);
-        assert_eq!(label, "BDARCHIVE_2024D001_OF_003");
+        assert_eq!(label, "BDARCHIVE_2024D1_OF_3");
 
         // Test longer base ID (should still fit)
         let label = generate_multi_disc_volume_label("2024-BD-VERY-LONG-ARCHIVE-NAME", 5, 12);
         assert!(label.len() <= 32); // Should fit within filesystem limits
-        assert!(label.contains("005"));
-        assert!(label.contains("012"));
+        assert!(label.contains("5"));
+        assert!(label.contains("12"));
     }
 
     #[test]
