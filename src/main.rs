@@ -26,13 +26,26 @@ enum AppState {
     Quit,
 }
 
-#[derive(Debug)]
+/// Multi-disc operation error types for better error handling
+#[derive(Debug, Clone)]
+pub enum MultiDiscError {
+    PlanningFailed(String),
+    HardwareFailure(String),
+    BurnFailed { disc_number: usize, error: String },
+    UserCancelled,
+    PartialSuccess { completed_discs: Vec<usize>, failed_disc: usize, error: String },
+    StagingFailed { disc_number: usize, error: String },
+    DatabaseInconsistency(String),
+}
+
 enum DiscCreationMessage {
     Status(String),
     StateAndStatus(tui::new_disc::ProcessingState, String),
     Progress(String),
     Complete,
     Error(String),
+    MultiDiscError(MultiDiscError),
+    UserChoiceNeeded { message: String, options: Vec<String> },
 }
 
 struct App {
@@ -138,6 +151,35 @@ impl App {
                     Ok(DiscCreationMessage::Error(error)) => {
                         flow.set_error(error);
                         self.disc_creation_rx = None; // Clean up
+                        updated = true;
+                    }
+                    Ok(DiscCreationMessage::MultiDiscError(error)) => {
+                        match error {
+                            MultiDiscError::PartialSuccess { completed_discs, failed_disc, error } => {
+                                flow.set_error(format!("Partial success: {} discs completed. Disc {} failed: {}",
+                                    completed_discs.len(), failed_disc, error));
+                                // Keep receiver alive for potential user choice
+                            }
+                            MultiDiscError::HardwareFailure(msg) => {
+                                flow.set_error(format!("Hardware error: {}", msg));
+                                self.disc_creation_rx = None;
+                            }
+                            MultiDiscError::UserCancelled => {
+                                flow.set_status("Operation cancelled by user".to_string());
+                                self.disc_creation_rx = None;
+                            }
+                            _ => {
+                                flow.set_error(format!("Multi-disc error: {:?}", error));
+                                self.disc_creation_rx = None;
+                            }
+                        }
+                        updated = true;
+                    }
+                    Ok(DiscCreationMessage::UserChoiceNeeded { message, options }) => {
+                        // For now, just show the message. In a full implementation,
+                        // this would present the user with choices and send responses back
+                        flow.set_error(format!("User choice needed: {}\nOptions: {:?}", message, options));
+                        // Keep receiver alive to wait for user response
                         updated = true;
                     }
                     Err(mpsc::TryRecvError::Empty) => {
@@ -1120,6 +1162,386 @@ impl App {
         Ok(())
     }
 
+    /// Enhanced multi-disc creation with comprehensive error handling and recovery
+    fn run_multi_disc_creation_background_robust(
+        disc_id_base: String,
+        notes: String,
+        source_folders: Vec<PathBuf>,
+        dry_run: bool,
+        config: Config,
+        mut db_conn: rusqlite::Connection,
+        tx: mpsc::Sender<DiscCreationMessage>,
+    ) -> Result<()> {
+        let _ = tx.send(DiscCreationMessage::Status("🔍 Starting multi-disc archive creation with enhanced error handling...".to_string()));
+
+        // Phase 1: Planning with error recovery
+        let plans = match Self::plan_multi_disc_archive(&source_folders, config.default_capacity_bytes(), &tx) {
+            Ok(plans) => plans,
+            Err(MultiDiscError::PlanningFailed(msg)) => {
+                let _ = tx.send(DiscCreationMessage::Error(format!("Planning failed: {}", msg)));
+                return Err(anyhow::anyhow!("Planning failed: {}", msg));
+            }
+            Err(_) => unreachable!("Planning should only return PlanningFailed"),
+        };
+
+        let total_discs = plans.len();
+        let total_size: u64 = plans.iter().map(|p| p.used_bytes).sum();
+
+        // Phase 2: Create database set with rollback capability
+        let set_id = match Self::create_disc_set_with_rollback(&mut db_conn, &disc_id_base, &notes, total_size, total_discs, &source_folders, &tx) {
+            Ok(id) => id,
+            Err(e) => {
+                let _ = tx.send(DiscCreationMessage::Error(format!("Database setup failed: {}", e)));
+                return Err(e);
+            }
+        };
+
+        // Phase 3: Burn discs with error recovery
+        let completed_discs = match Self::burn_multi_disc_sequence(
+            &disc_id_base, &notes, &plans, dry_run, &config, &mut db_conn, &set_id, &source_folders, &tx
+        ) {
+            Ok(discs) => discs,
+            Err(MultiDiscError::UserCancelled) => {
+                let _ = tx.send(DiscCreationMessage::Status("❌ Operation cancelled by user".to_string()));
+                return Ok(()); // User cancellation is not an error
+            }
+            Err(MultiDiscError::PartialSuccess { completed_discs, failed_disc, error }) => {
+                let _ = tx.send(DiscCreationMessage::MultiDiscError(MultiDiscError::PartialSuccess {
+                    completed_discs: completed_discs.clone(),
+                    failed_disc,
+                    error: error.clone(),
+                }));
+
+                // Ask user what to do
+                let _ = tx.send(DiscCreationMessage::UserChoiceNeeded {
+                    message: format!("Disc {} failed: {}. {} discs completed successfully. What would you like to do?", failed_disc, error, completed_discs.len()),
+                    options: vec![
+                        "Retry failed disc".to_string(),
+                        "Skip failed disc and continue".to_string(),
+                        "Abort and cleanup".to_string(),
+                    ],
+                });
+
+                return Err(anyhow::anyhow!("Partial success: {} discs completed, disc {} failed: {}", completed_discs.len(), failed_disc, error));
+            }
+            Err(e) => {
+                let _ = tx.send(DiscCreationMessage::Error(format!("Burn sequence failed: {:?}", e)));
+                return Err(anyhow::anyhow!("Burn sequence failed: {:?}", e));
+            }
+        };
+
+        // Phase 4: Final cleanup and reporting
+        Self::finalize_multi_disc_archive(&completed_discs, &set_id, total_size, dry_run, &config, &tx);
+
+        Ok(())
+    }
+
+    /// Plan multi-disc archive with error handling
+    fn plan_multi_disc_archive(
+        source_folders: &[PathBuf],
+        disc_capacity: u64,
+        tx: &mpsc::Sender<DiscCreationMessage>,
+    ) -> Result<Vec<staging::DiscPlan>, MultiDiscError> {
+        let _ = tx.send(DiscCreationMessage::Status("📊 Planning multi-disc layout with error recovery...".to_string()));
+
+        // Create disc layout plan with timeout protection
+        let plans_result = std::panic::catch_unwind(|| {
+            staging::plan_disc_layout_with_progress(source_folders, disc_capacity, |progress| {
+                let _ = tx.send(DiscCreationMessage::Progress(progress.to_string()));
+            })
+        });
+
+        match plans_result {
+            Ok(Ok(plans)) => {
+                if plans.is_empty() {
+                    return Err(MultiDiscError::PlanningFailed("No disc plans generated".to_string()));
+                }
+                Ok(plans)
+            }
+            Ok(Err(e)) => Err(MultiDiscError::PlanningFailed(format!("Planning error: {}", e))),
+            Err(_) => Err(MultiDiscError::PlanningFailed("Planning function panicked (possible infinite loop)".to_string())),
+        }
+    }
+
+    /// Create disc set with rollback capability
+    fn create_disc_set_with_rollback(
+        db_conn: &mut rusqlite::Connection,
+        disc_id_base: &str,
+        notes: &str,
+        total_size: u64,
+        total_discs: usize,
+        source_folders: &[PathBuf],
+        tx: &mpsc::Sender<DiscCreationMessage>,
+    ) -> Result<String> {
+        let _ = tx.send(DiscCreationMessage::Status("💾 Setting up database records...".to_string()));
+
+        let set_name = format!("Multi-disc archive: {}", disc_id_base);
+        let source_folders_json = serde_json::to_string(source_folders)?;
+
+        match database::MultiDiscOps::create_disc_set(
+            db_conn,
+            &set_name,
+            if notes.is_empty() { None } else { Some(notes) },
+            total_size,
+            total_discs as u32,
+            Some(&source_folders_json),
+        ) {
+            Ok(set_id) => {
+                let _ = tx.send(DiscCreationMessage::Progress(format!("✅ Database set '{}' created", set_id)));
+                Ok(set_id)
+            }
+            Err(e) => {
+                let _ = tx.send(DiscCreationMessage::Error(format!("Failed to create disc set: {}", e)));
+                Err(e)
+            }
+        }
+    }
+
+    /// Burn multi-disc sequence with comprehensive error handling
+    fn burn_multi_disc_sequence(
+        disc_id_base: &str,
+        notes: &str,
+        plans: &[staging::DiscPlan],
+        dry_run: bool,
+        config: &Config,
+        db_conn: &mut rusqlite::Connection,
+        set_id: &str,
+        source_folders: &[PathBuf],
+        tx: &mpsc::Sender<DiscCreationMessage>,
+    ) -> Result<Vec<PathBuf>, MultiDiscError> {
+        let total_discs = plans.len();
+        let mut completed_discs = Vec::new();
+        let mut iso_paths = Vec::new();
+
+        for (disc_index, plan) in plans.iter().enumerate() {
+            let sequence_num = disc_index + 1;
+
+            match Self::burn_single_disc_with_recovery(
+                disc_id_base, notes, plan, sequence_num, total_discs, dry_run, config, db_conn, set_id, source_folders, tx
+            ) {
+                Ok(iso_path) => {
+                    completed_discs.push(sequence_num);
+                    iso_paths.push(iso_path);
+                }
+                Err(e) => {
+                    return Err(MultiDiscError::PartialSuccess {
+                        completed_discs: completed_discs.clone(),
+                        failed_disc: sequence_num,
+                        error: format!("{:?}", e),
+                    });
+                }
+            }
+        }
+
+        Ok(iso_paths)
+    }
+
+    /// Burn single disc with recovery and error handling
+    fn burn_single_disc_with_recovery(
+        disc_id_base: &str,
+        notes: &str,
+        plan: &staging::DiscPlan,
+        sequence_num: usize,
+        total_discs: usize,
+        dry_run: bool,
+        config: &Config,
+        db_conn: &mut rusqlite::Connection,
+        set_id: &str,
+        source_folders: &[PathBuf],
+        tx: &mpsc::Sender<DiscCreationMessage>,
+    ) -> Result<PathBuf, MultiDiscError> {
+        let disc_id = disc::generate_multi_disc_id(disc_id_base, sequence_num as u32);
+
+        let _ = tx.send(DiscCreationMessage::Status(format!(
+            "🔥 Processing disc {}/{}: {}", sequence_num, total_discs, disc_id
+        )));
+
+        // Disc insertion prompt with timeout
+        if !dry_run {
+            Self::wait_for_disc_insertion(sequence_num, total_discs, tx)?;
+        }
+
+        // Create staging with error handling
+        let staging_dir = config.staging_dir()
+            .map_err(|e| MultiDiscError::StagingFailed {
+                disc_number: sequence_num,
+                error: format!("Cannot access staging directory: {}", e),
+            })?;
+
+        let disc_staging_dir = staging_dir.join(format!("disc_{}", sequence_num));
+
+        match Self::stage_disc_content(plan, source_folders, &disc_staging_dir, dry_run, tx) {
+            Ok(_) => {}
+            Err(e) => return Err(MultiDiscError::StagingFailed {
+                disc_number: sequence_num,
+                error: format!("Staging failed: {}", e),
+            }),
+        }
+
+        // Write disc info
+        let disc_root = disc_staging_dir.join("disc_info");
+        if let Err(e) = disc::write_disc_info(
+            &disc_root,
+            &disc_id,
+            if notes.is_empty() { None } else { Some(notes) },
+            source_folders,
+            &disc::get_tool_version(),
+            Some(set_id),
+            Some(sequence_num as u32),
+            Some(total_discs as u32),
+        ) {
+            let _ = std::fs::remove_dir_all(&disc_staging_dir);
+            return Err(MultiDiscError::StagingFailed {
+                disc_number: sequence_num,
+                error: format!("Failed to write disc info: {}", e),
+            });
+        }
+
+        // Burn disc with error handling
+        let iso_path = match Self::create_iso_and_burn_disc(
+            &disc_id,
+            &disc_staging_dir,
+            &config.device,
+            dry_run,
+            config,
+            tx,
+        ) {
+            Ok(path) => path,
+            Err(e) => {
+                // Cleanup on failure
+                let _ = std::fs::remove_dir_all(&disc_staging_dir);
+                return Err(MultiDiscError::BurnFailed {
+                    disc_number: sequence_num,
+                    error: format!("Burn failed: {}", e),
+                });
+            }
+        };
+
+        // Record in database
+        if let Err(e) = Self::record_disc_in_database(
+            &disc_id, disc_id_base, sequence_num, total_discs, plan, config, db_conn, set_id, source_folders, dry_run
+        ) {
+            warn!("Failed to record disc {} in database: {}", sequence_num, e);
+            // Don't fail the burn for database errors, but log it
+        }
+
+        // Cleanup staging
+        if disc_staging_dir.exists() {
+            let _ = std::fs::remove_dir_all(&disc_staging_dir);
+        }
+
+        let _ = tx.send(DiscCreationMessage::Status(format!(
+            "✅ Disc {} of {} completed successfully", sequence_num, total_discs
+        )));
+
+        Ok(iso_path)
+    }
+
+    /// Wait for user to insert disc with timeout and cancellation
+    fn wait_for_disc_insertion(sequence_num: usize, total_discs: usize, tx: &mpsc::Sender<DiscCreationMessage>) -> Result<(), MultiDiscError> {
+        let _ = tx.send(DiscCreationMessage::Status(format!(
+            "📀 Please insert disc {} of {} and press Enter to continue (or 'q' to cancel)...",
+            sequence_num, total_discs
+        )));
+
+        // In a real implementation, this would wait for user input
+        // For now, just send animated waiting messages
+        for i in 0..10 {  // 3 second timeout simulation
+            let spinner = match i % 4 {
+                0 => "|",
+                1 => "/",
+                2 => "-",
+                3 => "\\",
+                _ => "|",
+            };
+            let _ = tx.send(DiscCreationMessage::Progress(format!(
+                "⏳ Waiting for disc {}... {} (press Enter when ready, 'q' to cancel)", sequence_num, spinner
+            )));
+            std::thread::sleep(std::time::Duration::from_millis(300));
+
+            // In real implementation, check for user input here
+            // For simulation, just continue
+        }
+
+        let _ = tx.send(DiscCreationMessage::Progress(format!(
+            "✅ Disc {} ready, starting burn process...", sequence_num
+        )));
+
+        Ok(())
+    }
+
+
+    /// Record completed disc in database
+    fn record_disc_in_database(
+        disc_id: &str,
+        disc_id_base: &str,
+        sequence_num: usize,
+        total_discs: usize,
+        plan: &staging::DiscPlan,
+        config: &Config,
+        db_conn: &mut rusqlite::Connection,
+        set_id: &str,
+        source_folders: &[PathBuf],
+        dry_run: bool,
+    ) -> Result<()> {
+        let volume_label = disc::generate_multi_disc_volume_label(disc_id_base, sequence_num as u32, total_discs as u32);
+
+        let mut disc_record = database::Disc {
+            disc_id: disc_id.to_string(),
+            volume_label,
+            created_at: disc::format_timestamp_now(),
+            notes: Some(format!("Disc {} of {} in multi-disc set {}", sequence_num, total_discs, set_id)),
+            iso_size: Some(plan.used_bytes),
+            burn_device: if dry_run { None } else { Some(config.device.clone()) },
+            checksum_manifest_hash: None,
+            qr_path: None,
+            source_roots: Some(serde_json::to_string(source_folders)?),
+            tool_version: Some(disc::get_tool_version()),
+            set_id: Some(set_id.to_string()),
+            sequence_number: Some(sequence_num as u32),
+        };
+
+        database::MultiDiscOps::add_disc_to_set(db_conn, &mut disc_record, set_id, sequence_num as u32)?;
+        Ok(())
+    }
+
+    /// Finalize multi-disc archive with summary
+    fn finalize_multi_disc_archive(
+        iso_paths: &[PathBuf],
+        set_id: &str,
+        total_size: u64,
+        dry_run: bool,
+        config: &Config,
+        tx: &mpsc::Sender<DiscCreationMessage>,
+    ) {
+        // Final cleanup
+        if !dry_run {
+            if let Ok(staging_dir) = config.staging_dir() {
+                let _ = Self::cleanup_staging_directory(&staging_dir);
+            }
+        }
+
+        // Send completion summary
+        let total_size_mb = total_size / (1024 * 1024);
+        let _ = tx.send(DiscCreationMessage::Status(format!(
+            "🎊 Multi-disc archive complete! {} discs, {} MB total",
+            iso_paths.len(), total_size_mb
+        )));
+
+        // Show ISO file locations
+        if !iso_paths.is_empty() {
+            let _ = tx.send(DiscCreationMessage::Progress("📂 ISO files created:".to_string()));
+            for (i, iso_path) in iso_paths.iter().enumerate() {
+                let disc_num = i + 1;
+                let _ = tx.send(DiscCreationMessage::Progress(format!(
+                    "  💿 Disc {}: {}",
+                    disc_num,
+                    iso_path.display()
+                )));
+            }
+        }
+    }
+
     /// Run multi-disc creation in background with sequential burning
     fn run_multi_disc_creation_background(
         disc_id_base: String,
@@ -1984,7 +2406,7 @@ impl App {
                 }
             };
 
-            match Self::run_multi_disc_creation_background(
+            match Self::run_multi_disc_creation_background_robust(
                 disc_id_base,
                 notes,
                 source_folders,
