@@ -440,9 +440,9 @@ where
 
     progress_callback(&format!("📊 Found {} items to pack across discs", all_entries.len()));
 
-    // Sort by size (largest first) for better packing
-    progress_callback("🔄 Sorting items by size for optimal packing...");
-    all_entries.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
+    // Sort using intelligent bin-packing strategy
+    progress_callback("🧠 Sorting items with intelligent bin-packing algorithm...");
+    all_entries = sort_for_bin_packing(all_entries, disc_capacity_bytes);
 
     let mut discs = Vec::new();
     let current_disc = DiscPlan::new(discs.len() + 1, disc_capacity_bytes);
@@ -492,10 +492,12 @@ where
     Ok(discs)
 }
 
-/// Try to add an entry to existing discs, preferring to keep it whole
+/// Try to add an entry to existing discs using intelligent bin-packing
+/// Uses Best Fit Decreasing (BFD) algorithm for optimal space utilization
 fn try_add_to_disc(discs: &mut Vec<DiscPlan>, entry: &DirectoryEntry, disc_capacity: u64) -> bool {
-    // First try to add to existing discs without splitting
-    for disc in discs.iter_mut() {
+    // First try to add to existing discs without splitting using Best Fit
+    if let Some(best_disc_idx) = find_best_fit_disc(discs, entry, disc_capacity) {
+        let disc = &mut discs[best_disc_idx];
         if disc.try_add_entry(entry) {
             return true;
         }
@@ -503,7 +505,8 @@ fn try_add_to_disc(discs: &mut Vec<DiscPlan>, entry: &DirectoryEntry, disc_capac
 
     // If that didn't work, try splitting if it's a directory
     if !entry.is_file {
-        for disc in discs.iter_mut() {
+        if let Some(best_disc_idx) = find_best_fit_for_partial_directory(discs, entry, disc_capacity) {
+            let disc = &mut discs[best_disc_idx];
             if disc.try_add_partial_directory(entry, disc_capacity) {
                 return true;
             }
@@ -511,6 +514,199 @@ fn try_add_to_disc(discs: &mut Vec<DiscPlan>, entry: &DirectoryEntry, disc_capac
     }
 
     false
+}
+
+/// Find the best disc to fit an entry using Best Fit Decreasing algorithm
+/// Returns the index of the disc with least remaining space that can fit the item
+fn find_best_fit_disc(discs: &[DiscPlan], entry: &DirectoryEntry, _disc_capacity: u64) -> Option<usize> {
+    let mut best_fit_idx = None;
+    let mut best_wasted_space = u64::MAX;
+
+    for (i, disc) in discs.iter().enumerate() {
+        let remaining_space = disc.capacity_bytes.saturating_sub(disc.used_bytes);
+        if entry.size_bytes <= remaining_space {
+            let wasted_space = remaining_space - entry.size_bytes;
+            // Prefer discs with less wasted space (tighter fit)
+            if wasted_space < best_wasted_space {
+                best_wasted_space = wasted_space;
+                best_fit_idx = Some(i);
+            }
+        }
+    }
+
+    best_fit_idx
+}
+
+/// Find the best disc for partial directory placement
+fn find_best_fit_for_partial_directory(discs: &[DiscPlan], entry: &DirectoryEntry, disc_capacity: u64) -> Option<usize> {
+    let mut best_fit_idx = None;
+    let mut best_utilization = 0.0;
+
+    for (i, disc) in discs.iter().enumerate() {
+        let available_space = disc.capacity_bytes - disc.used_bytes;
+        if available_space < disc_capacity / 10 {
+            // Don't bother with less than 10% of disc space
+            continue;
+        }
+
+        // Calculate potential utilization if we add part of this directory
+        let mut potential_size = 0u64;
+        for child in &entry.children {
+            if potential_size + child.size_bytes <= available_space {
+                potential_size += child.size_bytes;
+            } else {
+                break;
+            }
+        }
+
+        if potential_size > 0 {
+            let utilization = potential_size as f64 / available_space as f64;
+            // Prefer higher utilization
+            if utilization > best_utilization {
+                best_utilization = utilization;
+                best_fit_idx = Some(i);
+            }
+        }
+    }
+
+    best_fit_idx
+}
+
+/// Sort entries for optimal bin-packing using multiple heuristics
+fn sort_for_bin_packing(entries: Vec<DirectoryEntry>, disc_capacity: u64) -> Vec<DirectoryEntry> {
+    // First, separate files and directories
+    let (files, directories): (Vec<_>, Vec<_>) = entries.into_iter()
+        .partition(|e| e.is_file);
+
+    // Sort files by size (largest first) - classic FFD for files
+    let mut sorted_files = files;
+    sorted_files.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
+
+    // For directories, use a more sophisticated approach
+    let mut sorted_directories = directories;
+    sorted_directories = sort_directories_for_packing(sorted_directories, disc_capacity);
+
+    // Combine: directories first (for better cohesion), then files
+    sorted_directories.extend(sorted_files);
+    sorted_directories
+}
+
+/// Sort directories using multiple bin-packing heuristics
+fn sort_directories_for_packing(directories: Vec<DirectoryEntry>, disc_capacity: u64) -> Vec<DirectoryEntry> {
+    if directories.is_empty() {
+        return directories;
+    }
+
+    // Calculate packing scores for each directory
+    let mut scored_directories: Vec<(DirectoryEntry, f64)> = directories.into_iter()
+        .map(|dir| {
+            let score = calculate_packing_score(&dir, disc_capacity);
+            (dir, score)
+        })
+        .collect();
+
+    // Sort by score (higher scores first - better packing candidates)
+    scored_directories.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+    scored_directories.into_iter().map(|(dir, _)| dir).collect()
+}
+
+/// Calculate a packing score for a directory based on multiple heuristics
+fn calculate_packing_score(dir: &DirectoryEntry, disc_capacity: u64) -> f64 {
+    let mut score = 0.0;
+
+    // Heuristic 1: Size efficiency (prefer directories that fit well on discs)
+    // Directories that are 40-80% of disc capacity score highest
+    let size_ratio = dir.size_bytes as f64 / disc_capacity as f64;
+    if size_ratio >= 0.4 && size_ratio <= 0.8 {
+        score += 100.0; // Perfect fit bonus
+    } else if size_ratio > 0.8 {
+        score += 50.0; // Large but may need splitting
+    } else if size_ratio >= 0.2 {
+        score += 75.0; // Medium size, flexible
+    } else {
+        score += 25.0; // Small, can fill gaps
+    }
+
+    // Heuristic 2: Child distribution (prefer directories with varied child sizes)
+    // This helps with better bin utilization
+    if !dir.children.is_empty() {
+        let child_sizes: Vec<f64> = dir.children.iter()
+            .map(|c| c.size_bytes as f64)
+            .collect();
+
+        if child_sizes.len() > 1 {
+            let avg_size = child_sizes.iter().sum::<f64>() / child_sizes.len() as f64;
+            let variance = child_sizes.iter()
+                .map(|&size| (size - avg_size).powi(2))
+                .sum::<f64>() / child_sizes.len() as f64;
+
+            // Higher variance means more varied sizes = better packing potential
+            let normalized_variance = variance.sqrt() / avg_size;
+            score += normalized_variance * 20.0;
+        }
+    }
+
+    // Heuristic 3: Directory depth (prefer shallower structures)
+    // Deeper directory structures are harder to split efficiently
+    let depth_penalty = (calculate_directory_depth(dir) as f64) * 5.0;
+    score -= depth_penalty;
+
+    // Heuristic 4: Large child bonus (directories with large children get priority)
+    // Large children should be placed first in bin-packing
+    if let Some(largest_child) = dir.children.iter()
+        .map(|c| c.size_bytes)
+        .max() {
+        let large_child_ratio = largest_child as f64 / disc_capacity as f64;
+        if large_child_ratio > 0.3 {
+            score += large_child_ratio * 30.0;
+        }
+    }
+
+    score
+}
+
+/// Calculate the maximum depth of a directory structure
+fn calculate_directory_depth(entry: &DirectoryEntry) -> usize {
+    if entry.children.is_empty() {
+        0
+    } else {
+        1 + entry.children.iter()
+            .map(calculate_directory_depth)
+            .max()
+            .unwrap_or(0)
+    }
+}
+
+/// Calculate how well a directory entry fits in available space
+/// Higher scores mean better fits
+fn calculate_fit_score(entry: &DirectoryEntry, available_space: u64) -> f64 {
+    if entry.size_bytes > available_space {
+        return 0.0; // Can't fit at all
+    }
+
+    let utilization = entry.size_bytes as f64 / available_space as f64;
+    let waste = available_space - entry.size_bytes;
+
+    // Prefer high utilization (close to 1.0) but penalize very small waste
+    // This avoids leaving tiny unusable gaps
+    let mut score = utilization * 100.0;
+
+    // Small waste penalty (gaps under 1MB are heavily penalized)
+    if waste > 0 && waste < 1024 * 1024 {
+        score -= 50.0;
+    } else if waste > 0 && waste < 10 * 1024 * 1024 {
+        score -= 20.0;
+    }
+
+    // Bonus for items that use significant portion of space
+    if utilization > 0.8 {
+        score += 20.0;
+    } else if utilization > 0.6 {
+        score += 10.0;
+    }
+
+    score
 }
 
 /// Split a large directory across multiple discs
@@ -526,9 +722,9 @@ fn split_directory_across_discs(
         return;
     }
 
-    // Sort children by size for better packing
+    // Sort children using intelligent bin-packing strategy
     let mut remaining_children = entry.children;
-    remaining_children.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
+    remaining_children = sort_for_bin_packing(remaining_children, disc_capacity);
 
     let mut part_num = 1;
     let dir_name = entry.path.file_name()
@@ -625,18 +821,29 @@ impl DiscPlan {
             return false;
         }
 
-        // Try to fit some children
-        let mut added_size = 0u64;
-        let mut added_children = Vec::new();
+    // Try to fit some children using intelligent selection
+    let mut added_size = 0u64;
+    let mut added_children = Vec::new();
 
-        for child in &entry.children {
-            if added_size + child.size_bytes <= available_space {
-                added_size += child.size_bytes;
-                added_children.push(child.clone());
-            } else {
-                break;
-            }
+    // Sort children by packing priority for this specific disc space
+    let mut sorted_children = entry.children.clone();
+    sorted_children.sort_by(|a, b| {
+        // Prefer children that fit well in remaining space
+        let a_fit_score = calculate_fit_score(a, available_space - added_size);
+        let b_fit_score = calculate_fit_score(b, available_space - added_size);
+        b_fit_score.partial_cmp(&a_fit_score).unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    for child in sorted_children {
+        if added_size + child.size_bytes <= available_space {
+            added_size += child.size_bytes;
+            added_children.push(child);
+        } else {
+            // If this child doesn't fit, check if smaller children might
+            // This prevents leaving small gaps
+            break;
         }
+    }
 
         if !added_children.is_empty() {
             // Create a partial directory entry
