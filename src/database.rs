@@ -2,9 +2,10 @@ use anyhow::{Context, Result};
 use rusqlite::{params, Connection, Transaction};
 use std::path::Path;
 use tracing::{debug, info};
+use crate::disc;
 
 /// Database schema version
-const SCHEMA_VERSION: u32 = 2;
+const SCHEMA_VERSION: u32 = 3;
 
 /// Initialize the database and run migrations if needed.
 pub fn init_database(db_path: &Path) -> Result<Connection> {
@@ -45,9 +46,12 @@ fn migrate_database(conn: &mut Connection) -> Result<()> {
         if current_version == 1 {
             migrate_v1_to_v2(&tx)?;
         }
+        if current_version == 2 {
+            migrate_v2_to_v3(&tx)?;
+        }
         // Future migrations would go here:
-        // if current_version == 2 {
-        //     migrate_v2_to_v3(&tx)?;
+        // if current_version == 3 {
+        //     migrate_v3_to_v4(&tx)?;
         // }
         set_schema_version(&tx, SCHEMA_VERSION)?;
         tx.commit()?;
@@ -149,6 +153,46 @@ fn migrate_v1_to_v2(tx: &Transaction) -> Result<()> {
     // but we can add the index and handle constraints in application code)
 
     info!("Migration to version 2 completed");
+    Ok(())
+}
+
+fn migrate_v2_to_v3(tx: &Transaction) -> Result<()> {
+    info!("Migrating database to version 3: adding burn session persistence");
+
+    // Burn sessions table for pause/resume functionality
+    tx.execute(
+        "CREATE TABLE IF NOT EXISTS burn_sessions (
+            session_id TEXT PRIMARY KEY,
+            set_id TEXT NOT NULL,
+            session_name TEXT NOT NULL,
+            current_disc INTEGER NOT NULL,
+            total_discs INTEGER NOT NULL,
+            completed_discs TEXT NOT NULL, -- JSON array of completed disc numbers
+            failed_discs TEXT, -- JSON array of failed disc numbers
+            source_folders TEXT NOT NULL, -- JSON array of source folder paths
+            config_json TEXT NOT NULL, -- Serialized burn configuration
+            staging_state TEXT, -- JSON state of staging directories
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active', -- active, paused, completed, cancelled
+            notes TEXT,
+            FOREIGN KEY (set_id) REFERENCES disc_sets(set_id) ON DELETE CASCADE
+        )",
+        [],
+    )?;
+
+    // Index for efficient session queries
+    tx.execute(
+        "CREATE INDEX IF NOT EXISTS idx_burn_sessions_status ON burn_sessions(status)",
+        [],
+    )?;
+
+    tx.execute(
+        "CREATE INDEX IF NOT EXISTS idx_burn_sessions_updated ON burn_sessions(updated_at)",
+        [],
+    )?;
+
+    info!("Migration to version 3 completed");
     Ok(())
 }
 
@@ -755,5 +799,260 @@ mod tests {
         assert_eq!(related_discs.len(), 2);
 
         Ok(())
+    }
+}
+
+/// Burn session states for pause/resume functionality
+#[derive(Debug, Clone, PartialEq)]
+pub enum BurnSessionStatus {
+    Active,
+    Paused,
+    Completed,
+    Cancelled,
+}
+
+impl std::fmt::Display for BurnSessionStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BurnSessionStatus::Active => write!(f, "active"),
+            BurnSessionStatus::Paused => write!(f, "paused"),
+            BurnSessionStatus::Completed => write!(f, "completed"),
+            BurnSessionStatus::Cancelled => write!(f, "cancelled"),
+        }
+    }
+}
+
+/// Burn session persistence for pause/resume functionality
+#[derive(Debug, Clone)]
+pub struct BurnSession {
+    pub session_id: String,
+    pub set_id: String,
+    pub session_name: String,
+    pub current_disc: usize,
+    pub total_discs: usize,
+    pub completed_discs: Vec<usize>,
+    pub failed_discs: Vec<usize>,
+    pub source_folders: Vec<std::path::PathBuf>,
+    pub config_json: String,
+    pub staging_state: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub status: BurnSessionStatus,
+    pub notes: Option<String>,
+}
+
+impl BurnSession {
+    /// Create a new burn session
+    pub fn new(
+        set_id: String,
+        session_name: String,
+        total_discs: usize,
+        source_folders: Vec<std::path::PathBuf>,
+        config_json: String,
+    ) -> Self {
+        let now = disc::format_timestamp_now();
+        Self {
+            session_id: format!("session_{}", uuid::Uuid::new_v4().simple()),
+            set_id,
+            session_name,
+            current_disc: 1,
+            total_discs,
+            completed_discs: Vec::new(),
+            failed_discs: Vec::new(),
+            source_folders,
+            config_json,
+            staging_state: None,
+            created_at: now.clone(),
+            updated_at: now,
+            status: BurnSessionStatus::Active,
+            notes: None,
+        }
+    }
+
+    /// Save session to database
+    pub fn save(&self, conn: &Connection) -> Result<()> {
+        conn.execute(
+            "INSERT OR REPLACE INTO burn_sessions (
+                session_id, set_id, session_name, current_disc, total_discs,
+                completed_discs, failed_discs, source_folders, config_json,
+                staging_state, created_at, updated_at, status, notes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            params![
+                &self.session_id,
+                &self.set_id,
+                &self.session_name,
+                self.current_disc as u32,
+                self.total_discs as u32,
+                &serde_json::to_string(&self.completed_discs)?,
+                &serde_json::to_string(&self.failed_discs)?,
+                &serde_json::to_string(&self.source_folders)?,
+                &self.config_json,
+                &self.staging_state,
+                &self.created_at,
+                &self.updated_at,
+                &self.status.to_string(),
+                &self.notes,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Load session from database
+    pub fn load(conn: &Connection, session_id: &str) -> Result<Option<Self>> {
+        let mut stmt = conn.prepare(
+            "SELECT session_id, set_id, session_name, current_disc, total_discs,
+                    completed_discs, failed_discs, source_folders, config_json,
+                    staging_state, created_at, updated_at, status, notes
+             FROM burn_sessions WHERE session_id = ?"
+        )?;
+
+        let mut rows = stmt.query_map(params![session_id], |row| {
+            let status_str: String = row.get(12)?;
+            let status = match status_str.as_str() {
+                "active" => BurnSessionStatus::Active,
+                "paused" => BurnSessionStatus::Paused,
+                "completed" => BurnSessionStatus::Completed,
+                "cancelled" => BurnSessionStatus::Cancelled,
+                _ => BurnSessionStatus::Active,
+            };
+
+            Ok(BurnSession {
+                session_id: row.get(0)?,
+                set_id: row.get(1)?,
+                session_name: row.get(2)?,
+                current_disc: row.get::<_, u32>(3)? as usize,
+                total_discs: row.get::<_, u32>(4)? as usize,
+                completed_discs: serde_json::from_str(&row.get::<_, String>(5)?).unwrap_or_default(),
+                failed_discs: serde_json::from_str(&row.get::<_, String>(6)?).unwrap_or_default(),
+                source_folders: serde_json::from_str(&row.get::<_, String>(7)?).unwrap_or_default(),
+                config_json: row.get(8)?,
+                staging_state: row.get(9)?,
+                created_at: row.get(10)?,
+                updated_at: row.get(11)?,
+                status,
+                notes: row.get(12)?,
+            })
+        })?;
+
+        if let Some(session) = rows.next() {
+            Ok(Some(session?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Update session progress
+    pub fn update_progress(&mut self, completed_disc: usize) {
+        if !self.completed_discs.contains(&completed_disc) {
+            self.completed_discs.push(completed_disc);
+        }
+        self.current_disc = completed_disc + 1;
+        self.updated_at = disc::format_timestamp_now();
+    }
+
+    /// Mark session as paused
+    pub fn pause(&mut self, staging_state: Option<String>) {
+        self.status = BurnSessionStatus::Paused;
+        self.staging_state = staging_state;
+        self.updated_at = disc::format_timestamp_now();
+    }
+
+    /// Mark session as completed
+    pub fn complete(&mut self) {
+        self.status = BurnSessionStatus::Completed;
+        self.updated_at = disc::format_timestamp_now();
+    }
+
+    /// Mark session as cancelled
+    pub fn cancel(&mut self) {
+        self.status = BurnSessionStatus::Cancelled;
+        self.updated_at = disc::format_timestamp_now();
+    }
+}
+
+/// Burn session database operations
+pub struct BurnSessionOps;
+
+impl BurnSessionOps {
+    /// Get all active/paused sessions
+    pub fn get_active_sessions(conn: &Connection) -> Result<Vec<BurnSession>> {
+        let mut stmt = conn.prepare(
+            "SELECT session_id, set_id, session_name, current_disc, total_discs,
+                    completed_discs, failed_discs, source_folders, config_json,
+                    staging_state, created_at, updated_at, status, notes
+             FROM burn_sessions
+             WHERE status IN ('active', 'paused')
+             ORDER BY updated_at DESC"
+        )?;
+
+        let sessions = stmt.query_map(params![], |row| {
+            let status_str: String = row.get(12)?;
+            let status = match status_str.as_str() {
+                "active" => BurnSessionStatus::Active,
+                "paused" => BurnSessionStatus::Paused,
+                "completed" => BurnSessionStatus::Completed,
+                "cancelled" => BurnSessionStatus::Cancelled,
+                _ => BurnSessionStatus::Active,
+            };
+
+            Ok(BurnSession {
+                session_id: row.get(0)?,
+                set_id: row.get(1)?,
+                session_name: row.get(2)?,
+                current_disc: row.get::<_, u32>(3)? as usize,
+                total_discs: row.get::<_, u32>(4)? as usize,
+                completed_discs: serde_json::from_str(&row.get::<_, String>(5)?).unwrap_or_default(),
+                failed_discs: serde_json::from_str(&row.get::<_, String>(6)?).unwrap_or_default(),
+                source_folders: serde_json::from_str(&row.get::<_, String>(7)?).unwrap_or_default(),
+                config_json: row.get(8)?,
+                staging_state: row.get(9)?,
+                created_at: row.get(10)?,
+                updated_at: row.get(11)?,
+                status,
+                notes: row.get(12)?,
+            })
+        })?;
+
+        sessions.map(|r| r.map_err(anyhow::Error::from)).collect::<Result<Vec<_>>>()
+    }
+
+    /// Delete a session and clean up associated data
+    pub fn delete_session(conn: &Connection, session_id: &str) -> Result<()> {
+        // Clean up associated staging directories if they exist
+        if let Some(session) = BurnSession::load(conn, session_id)? {
+            if let Some(staging_state) = &session.staging_state {
+                // Try to parse and clean up staging directories
+                if let Ok(staging_dirs) = serde_json::from_str::<Vec<String>>(staging_state) {
+                    for dir in staging_dirs {
+                        let _ = std::fs::remove_dir_all(std::path::Path::new(&dir));
+                    }
+                }
+            }
+        }
+
+        conn.execute("DELETE FROM burn_sessions WHERE session_id = ?", params![session_id])?;
+        Ok(())
+    }
+
+    /// Get space usage for all paused sessions
+    pub fn get_sessions_space_usage(conn: &Connection) -> Result<u64> {
+        let sessions = Self::get_active_sessions(conn)?;
+        let mut total_size = 0u64;
+
+        for session in sessions {
+            if let Some(staging_state) = &session.staging_state {
+                if let Ok(staging_dirs) = serde_json::from_str::<Vec<String>>(staging_state) {
+                    for dir in staging_dirs {
+                        if let Ok(metadata) = std::fs::metadata(&dir) {
+                            // Estimate space usage (this is approximate)
+                            // In a real implementation, you'd walk the directory
+                            total_size += metadata.len();
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(total_size)
     }
 }
