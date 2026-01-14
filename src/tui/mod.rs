@@ -8,6 +8,7 @@ pub mod resume_burn;
 pub mod search_ui;
 pub mod settings;
 pub mod splash;
+pub mod verify_multi_disc;
 pub mod verify_ui;
 
 pub use directory_selector::{DirectorySelector, Focus};
@@ -19,4 +20,5 @@ pub use resume_burn::ResumeBurnUI;
 pub use search_ui::SearchUI;
 pub use settings::Settings;
 pub use splash::{DbStatus, SplashScreen};
+pub use verify_multi_disc::VerifyMultiDiscUI;
 pub use verify_ui::{VerificationState, VerifyInputMode, VerifyUI};

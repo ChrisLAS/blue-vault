@@ -341,6 +341,28 @@ impl DiscSet {
         Ok(())
     }
 
+    /// List all disc sets.
+    pub fn list_all(conn: &Connection) -> Result<Vec<DiscSet>> {
+        let mut stmt = conn.prepare(
+            "SELECT set_id, name, description, total_size, disc_count, created_at, source_roots
+             FROM disc_sets ORDER BY created_at DESC",
+        )?;
+
+        let disc_sets = stmt.query_map(params![], |row| {
+            Ok(DiscSet {
+                set_id: row.get(0)?,
+                name: row.get(1)?,
+                description: row.get(2)?,
+                total_size: row.get(3)?,
+                disc_count: row.get(4)?,
+                created_at: row.get(5)?,
+                source_roots: row.get(6)?,
+            })
+        })?;
+
+        disc_sets.map(|r| r.map_err(anyhow::Error::from)).collect::<Result<Vec<_>>>()
+    }
+
     /// Get a disc set by ID.
     pub fn get(conn: &Connection, set_id: &str) -> Result<Option<DiscSet>> {
         let mut stmt = conn.prepare(
