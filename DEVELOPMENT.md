@@ -6,97 +6,138 @@ This document provides context for developers (including AI assistants like Curs
 
 BlueVault is a terminal-based Blu-ray archive manager written in Rust. It features a retro 80s phosphor terminal aesthetic and provides a complete workflow for creating, indexing, and verifying Blu-ray archives.
 
-## Current State (v0.1.2 - Multi-Disc Support)
+## Current State (v0.1.2 - Production Ready)
 
 ### Implemented Features
 
 ✅ **Core TUI System**
-- Main menu with keyboard navigation
-- Phosphor green theme system with fallbacks
-- Header/footer patterns
-- Splash screen on startup
-- Settings screen showing theme/motion config
+- Main menu with keyboard navigation (↑/↓/Enter, hjkl vim keys)
+- Phosphor green theme system with accessibility fallbacks
+- Header/footer patterns with consistent branding
+- Startup splash screen with system status
+- Settings screen for theme/motion configuration
+- Universal quit ('Q') and navigation ('Esc') keys
+
+✅ **Multi-Disc Archive System** 🚀
+- **Automatic Splitting**: Intelligently distributes large archives across multiple Blu-ray discs
+- **Advanced Bin-Packing**: Sophisticated algorithm minimizes disc count while preserving directory structure
+- **Smart Planning**: Pre-burn preview shows exact content distribution
+- **Sequential Burning**: Guided workflow for burning multi-disc sets
+- **Session Management**: Pause/resume capability for long operations
+- **Progress Tracking**: Real-time feedback throughout multi-disc operations
+- **Error Recovery**: Comprehensive handling of hardware failures and user interruptions
+- **Set Verification**: Integrity checking for entire multi-disc archives
 
 ✅ **New Disc Creation Flow**
 - Multi-step wizard: Disc ID → Notes → Folder Selection → Review → Processing
-- Dual-mode directory selector:
+- **Dual-mode directory selector**:
   - **Manual input box**: Always visible, default focus, type paths directly
-  - **Directory browser**: Tab to focus, navigate with ↑/↓, Enter to select
-- Progress indicators with disc activity animations
-- Full workflow: staging → manifest → ISO → burn → index → QR
-- **Multi-disc support**: Automatically splits large archives across multiple discs
-- **Smart planning**: Greedy bin-packing algorithm preserves directory integrity
-- **Sequential burning**: Guides users through burning multiple discs
-- **ISO path reporting**: Shows locations of all created ISO files
+  - **Directory browser**: Tab to focus, navigate with ↑/↓, Enter to select, lazy loading
+- **Progress indicators** with disc activity animations (80s CD-style)
+- **Full workflow**: staging → manifest → ISO → burn → index → QR
+- **Dry run testing** with actual ISO creation and size reporting
+- **ISO path reporting** shows locations of all created files
+
+✅ **Session Management & Recovery** ⏸️▶️
+- **Pause/Resume**: Interrupt and resume multi-disc operations at any point
+- **Session Persistence**: State survives app restarts and system interruptions
+- **Progress Preservation**: Continue exactly where you left off
+- **Cleanup Management**: Safe removal of paused session data
+- **Space Monitoring**: User visibility into temporary file usage
 
 ✅ **Directory Selection**
 - Custom-built directory browser using ratatui List widget
 - Lazy loading: entries only load when browser is focused
-- Path syncing between input and browser
-- Tab to toggle focus between input and browser
+- Path syncing between input and browser modes
+- Tab toggles focus between manual input and visual browser
 
-✅ **Database & Indexing**
-- SQLite database with migrations
-- Discs, files, and verification_runs tables
-- Search functionality (substring match on paths)
+✅ **Database & Indexing** 💾
+- SQLite database with versioned migrations (current: v3)
+- **Enhanced schema**: discs, files, verification_runs, disc_sets, burn_sessions
+- **Multi-disc relationships**: Proper set tracking and sequencing
+- **Session persistence**: Pause/resume state storage
+- Search functionality (substring match on paths, extensible for regex)
 
-✅ **Disc Verification**
-- Mount/unmount handling
-- SHA256 verification using `sha256sum -c`
-- Results stored in database
+✅ **Verification System** 🔍
+- **Single-disc verification**: Mount/unmount handling with SHA256 checksums
+- **Multi-disc verification**: Set completeness and integrity checking
+- **Intelligent disc detection**: Automatic scanning of mount points
+- **Partial verification**: Verify available discs in incomplete sets
+- Results stored in database with detailed reporting
 
-✅ **Theme System**
-- Phosphor (default): Classic green CRT look
-- Amber (optional): Warm amber terminal
-- Mono (optional): High-contrast accessibility mode
-- Environment variable support: `TUI_THEME`, `TUI_NO_ANIM`, `TUI_REDUCED_MOTION`
+✅ **Theme System** 🎨
+- **Phosphor** (default): Classic green CRT aesthetic (#3CFF8A on #07110A)
+- **Amber** (optional): Warm amber terminal colors
+- **Mono** (optional): High-contrast accessibility mode
+- Environment variables: `TUI_THEME`, `TUI_NO_ANIM`, `TUI_REDUCED_MOTION`
 - ANSI 16/256 color fallbacks for limited terminals
+- Accessibility support with reduced motion options
 
-✅ **UI Components**
-- Grid-aligned layouts (stable, flicker-free)
+✅ **UI Components** 🖥️
+- Grid-aligned layouts (stable, flicker-free rendering)
 - Animation system with throttling (8-12 FPS, auto-slowdown after 60s)
-- Disc activity widgets (80s-style CD read/write indicators)
-- Consistent header/footer patterns
+- Disc activity widgets (80s-style CD read/write indicators with LBA counters)
+- Consistent header/footer patterns with screen titles
+- Startup splash with dependency checking and system status
 
-✅ **Cleanup Utilities**
-- Comprehensive temporary file removal via main menu
-- Removes build artifacts (target/debug, target/release)
-- Cleans leftover ISO files and staging directories
-- Safe selective cleanup with error handling and progress feedback
+✅ **Cleanup & Maintenance** 🧹
+- **Comprehensive cleanup** via main menu option
+- **Selective removal**: build artifacts, staging directories, orphaned files
+- **Session-aware**: preserves active burn data while cleaning completed sessions
+- **Progress feedback** during cleanup operations
+- **Safe operations** with confirmation and error handling
 
 ### Known Issues / Limitations
 
-⚠️ **Directory Browser Loading**
-- Currently loads synchronously when focused, which can be slow for large directories
+⚠️ **Directory Browser Performance**
+- Loads synchronously when focused, can be slow for directories with 1000+ entries
 - Loading happens when you Tab to browser, not on screen entry
-- Future: Could use async/background loading with progress indicator
+- Future: Async/background loading with progress indicators
 
-✅ **Multi-Disc Archives**
-- Fully implemented with smart directory boundary splitting
-- Greedy bin-packing algorithm preserves directory integrity when possible
-- Automatic sequential disc naming (2026-BD-ARCHIVE-001, etc.)
-- Database tracks multi-disc set relationships
-- User-guided sequential burning with progress feedback
-- ISO path reporting shows locations of all created files
+✅ **Multi-Disc Archives - FULLY IMPLEMENTED**
+- Advanced bin-packing algorithm with directory integrity preservation
+- Automatic sequential naming (2026-BD-1, 2026-BD-2, etc. - zero padding removed)
+- Complete database relationship tracking for disc sets
+- User-guided sequential burning with comprehensive error recovery
+- Pre-burn planning shows exact content distribution
+- ISO path reporting for all created files
+- Session pause/resume capability for long operations
 
-⚠️ **Search**
-- Only substring matching on paths (regex not implemented)
-- No fuzzy search or advanced query options
-- Future: Add regex support, filename-only search, date range filtering
+✅ **Resume/Pause Capability - FULLY IMPLEMENTED**
+- Pause multi-disc operations at any point ('p' key)
+- Resume interrupted sessions from main menu
+- Session state persistence across app restarts
+- Automatic cleanup management for paused sessions
+- Progress preservation and failure recovery
+- Space usage monitoring for temporary files
 
-✅ **Enhanced Progress Indicators**
-- Real-time burn progress with speed, ETA, and completion percentage
-- Detailed multi-disc planning progress with item counts
-- Background processing with non-blocking progress updates
-- File-by-file staging progress during disc preparation
+✅ **Multi-Disc Verification - FULLY IMPLEMENTED**
+- Set completeness verification (all discs present)
+- Individual disc integrity checking
+- Intelligent mount point scanning
+- Partial verification for incomplete sets
+- Detailed per-disc status reporting
+- Database integration for verification history
+
+⚠️ **Search Functionality**
+- Current: Substring matching on file paths only
+- Missing: Regex support, filename-only search, date filtering, size filtering
+- Future: Advanced query options and fuzzy search
+
+✅ **Progress Indicators - ENHANCED**
+- Real-time burn progress with speed, ETA, completion percentage
+- Multi-disc planning progress with item counts and space calculations
+- File-by-file staging progress during preparation
+- Background processing with non-blocking UI updates
 - Comprehensive completion summaries with ISO path reporting
-- Burning progress relies on growisofs output (not always available)
-- Future: More granular progress reporting
+- Disc activity animations (80s CD-style indicators)
 
-⚠️ **Resume Support**
-- Interrupted operations cannot resume from checkpoint
-- Must restart from beginning
-- Future: Add checkpoint/resume capability
+⚠️ **Future Enhancement Opportunities**
+- **Advanced Verification**: Cross-disc consistency checking, corruption repair
+- **Search Enhancements**: Regex patterns, fuzzy matching, metadata filters
+- **Performance**: Async directory loading, parallel verification
+- **Network Features**: Remote verification, distributed archives
+- **Advanced UI**: Keyboard shortcuts, mouse support, themes
 
 ### Technical Debt
 

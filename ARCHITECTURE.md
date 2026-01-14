@@ -7,40 +7,42 @@ bluevault/
 ├── Cargo.toml
 ├── Cargo.lock
 ├── src/
-│   ├── main.rs                 # Entry point, TUI orchestration, event loop
+│   ├── main.rs                 # Entry point, TUI orchestration, event loop, session management
 │   ├── lib.rs                  # Library exports
-│   ├── config.rs               # Configuration management (TOML)
-│   ├── database.rs             # SQLite schema, migrations, queries
-│   ├── manifest.rs             # Manifest + SHA256 generation
-│   ├── staging.rs              # File staging logic, multi-disc planning
-│   ├── disc.rs                 # Disc layout, DISC_INFO.txt generation
+│   ├── config.rs               # Configuration management (TOML-based)
+│   ├── database.rs             # SQLite schema, migrations, queries (v3: multi-disc + sessions)
+│   ├── manifest.rs             # Manifest + SHA256/CRC32 generation (multi-core)
+│   ├── staging.rs              # File staging logic, advanced bin-packing algorithm
+│   ├── disc.rs                 # Disc layout, DISC_INFO.txt generation, multi-disc naming
 │   ├── iso.rs                  # ISO creation via xorriso
-│   ├── burn.rs                 # Burning via growisofs
-│   ├── verify.rs               # Disc verification (sha256sum -c)
+│   ├── burn.rs                 # Burning via growisofs with progress parsing
+│   ├── verify.rs               # Disc verification (single + multi-disc sets)
 │   ├── qrcode.rs               # QR code generation (optional qrencode)
-│   ├── search.rs               # Search functionality
+│   ├── search.rs               # Search functionality (substring matching)
 │   ├── commands.rs             # Safe command execution (no shell injection)
-│   ├── dependencies.rs         # Dependency checking
-│   ├── paths.rs                # Path normalization, XDG dirs
-│   ├── logging.rs              # Structured logging
-│   ├── theme.rs                # Theme system (phosphor/amber/mono)
-│   ├── tui/                    # TUI screens
+│   ├── dependencies.rs         # Dependency checking and validation
+│   ├── paths.rs                # Path normalization, XDG directory handling
+│   ├── logging.rs              # Structured logging with tracing
+│   ├── theme.rs                # Theme system (phosphor/amber/mono + accessibility)
+│   ├── tui/                    # TUI screens and components
 │   │   ├── mod.rs
-│   │   ├── main_menu.rs        # Main menu screen
-│   │   ├── new_disc.rs         # New disc creation flow
+│   │   ├── main_menu.rs        # Main menu with 9 options
+│   │   ├── new_disc.rs         # Multi-disc creation flow with pause/resume
+│   │   ├── resume_burn.rs      # Session management and cleanup UI
+│   │   ├── verify_multi_disc.rs # Multi-disc set verification interface
 │   │   ├── directory_selector_simple.rs  # Dual-mode directory selector
 │   │   ├── search_ui.rs        # Search interface
-│   │   ├── verify_ui.rs        # Verify disc interface
-│   │   ├── list_discs.rs       # List all discs
+│   │   ├── verify_ui.rs        # Single disc verification
+│   │   ├── list_discs.rs       # List all discs with set relationships
 │   │   ├── settings.rs         # Settings management
 │   │   ├── logs_view.rs        # Log viewer
-│   │   └── splash.rs           # Startup splash screen
-│   └── ui/                     # UI utilities
+│   │   └── splash.rs           # Startup splash screen with status
+│   └── ui/                     # UI utilities and components
 │       ├── mod.rs
-│       ├── layout.rs           # Grid-aligned layout helpers
-│       ├── animations.rs       # Animation throttling, spinners
-│       ├── disc_activity.rs    # CD-style read/write indicators
-│       └── header_footer.rs    # Consistent header/footer widgets
+│       ├── layout.rs           # Grid-aligned layout system (flicker-free)
+│       ├── animations.rs       # Animation throttling, spinners, progress bars
+│       ├── disc_activity.rs    # 80s-style CD read/write indicators with LBA
+│       └── header_footer.rs    # Consistent header/footer patterns
 ├── tests/                      # Unit and integration tests
 ├── README.md                   # GitHub front page
 ├── ARCHITECTURE.md             # This file - detailed architecture
@@ -199,40 +201,136 @@ CREATE INDEX idx_verification_disc_id ON verification_runs(disc_id);
 CREATE INDEX idx_verification_verified_at ON verification_runs(verified_at);
 ```
 
-## Multi-Disc Processing
+### disc_sets table (v2+)
+```sql
+CREATE TABLE disc_sets (
+    set_id TEXT PRIMARY KEY,              -- Unique set identifier
+    name TEXT NOT NULL,                   -- Human-readable set name
+    description TEXT,                     -- User notes about the set
+    total_size INTEGER NOT NULL,          -- Total size of all discs in bytes
+    disc_count INTEGER NOT NULL,          -- Number of discs in set
+    created_at TEXT NOT NULL,             -- ISO 8601 creation timestamp
+    source_roots TEXT                     -- JSON array of original source paths
+);
 
-### Planning Algorithm
+CREATE INDEX idx_disc_sets_created_at ON disc_sets(created_at);
+```
 
-BlueVault uses a greedy bin-packing algorithm to distribute files across multiple Blu-ray discs while preserving directory integrity when possible:
+### burn_sessions table (v3+)
+```sql
+CREATE TABLE burn_sessions (
+    session_id TEXT PRIMARY KEY,          -- Unique session identifier
+    set_id TEXT NOT NULL,                 -- Associated disc set
+    session_name TEXT NOT NULL,           -- Display name for session
+    current_disc INTEGER NOT NULL,        -- Current disc being processed (1-based)
+    total_discs INTEGER NOT NULL,         -- Total discs in set
+    completed_discs TEXT NOT NULL,        -- JSON array of completed disc numbers
+    failed_discs TEXT,                    -- JSON array of failed disc numbers
+    source_folders TEXT NOT NULL,         -- JSON array of source folder paths
+    config_json TEXT NOT NULL,            -- Serialized burn configuration
+    staging_state TEXT,                   -- JSON state of staging directories
+    created_at TEXT NOT NULL,             -- Session creation timestamp
+    updated_at TEXT NOT NULL,             -- Last update timestamp
+    status TEXT NOT NULL DEFAULT 'active', -- active, paused, completed, cancelled
+    notes TEXT,                           -- User notes about session
+    FOREIGN KEY (set_id) REFERENCES disc_sets(set_id) ON DELETE CASCADE
+);
 
-1. **Directory Analysis**: Recursively analyze source folders to build a tree of `DirectoryEntry` structures
-2. **Size Calculation**: Compute total sizes for all files and directories
-3. **Greedy Packing**: Sort entries by size (largest first) and pack into discs using these rules:
-   - Try to fit entire directories first (preserves structure)
-   - Split directories at subdirectory boundaries only when necessary
-   - Fill remaining space with individual files
-4. **Sequential Naming**: Generate disc IDs like `2026-BD-ARCHIVE-1`, `2026-BD-ARCHIVE-2`, etc.
-5. **Database Tracking**: Store set relationships using `set_id` and `sequence_number` fields
+CREATE INDEX idx_burn_sessions_status ON burn_sessions(status);
+CREATE INDEX idx_burn_sessions_updated ON burn_sessions(updated_at);
+```
 
-### Processing Flow
+## Multi-Disc Archive System
+
+BlueVault's multi-disc system is a production-grade solution for distributing large archives across multiple Blu-ray discs with enterprise-level reliability and user experience.
+
+### Advanced Bin-Packing Algorithm
+
+The system uses a sophisticated multi-heuristic bin-packing algorithm that optimizes space utilization while preserving data integrity:
+
+#### **Sorting Strategy**
+1. **Directory Priority**: Directories before files (preserves structure)
+2. **Size Efficiency**: Items sized 40-80% of disc capacity prioritized (optimal fit)
+3. **Child Distribution**: Varied child sizes get preference (better packing potential)
+4. **Depth Penalty**: Shallow directory structures preferred (easier to split)
+5. **Large Child Bonus**: Directories with large children prioritized (FFD principle)
+
+#### **Packing Heuristics**
+- **Best Fit Decreasing**: Finds disc with least remaining space that can fit item
+- **Space Utilization**: Prefers placements with high space efficiency
+- **Gap Prevention**: Avoids leaving unusable small gaps (<1MB heavily penalized)
+- **Directory Cohesion**: Keeps related directories together when possible
+
+#### **Splitting Logic**
+- **Boundary Preservation**: Splits at directory boundaries, not mid-file
+- **Partial Directory**: Fits as much of a directory as possible on current disc
+- **Continuation**: Remaining content goes to next disc with clear naming
+
+### Session Management & Recovery
+
+#### **Pause/Resume Architecture**
+- **State Persistence**: Complete session state saved to `burn_sessions` table
+- **Progress Tracking**: Current disc, completed discs, failed discs
+- **Staging State**: Temporary directory contents tracked for cleanup
+- **Configuration Preservation**: All burn settings maintained across sessions
+
+#### **Recovery Scenarios**
+- **User Pause**: Manual interruption with clean state preservation
+- **System Crash**: Automatic recovery on app restart
+- **Hardware Failure**: Resume from last successful disc
+- **Partial Success**: Continue with remaining discs in set
+
+### Multi-Disc Verification System
+
+#### **Set Completeness Checking**
+- **Disc Presence**: Scans mount points for all discs in set
+- **ID Matching**: Verifies discs by `DISC_INFO.txt` content
+- **Status Aggregation**: Reports Verified/Failed/Missing for each disc
+
+#### **Integrity Verification**
+- **Individual Disc Checks**: SHA256 verification per disc
+- **Aggregate Reporting**: Overall set health status
+- **Partial Verification**: Verify available discs in incomplete sets
+- **Historical Tracking**: Database storage of verification results
+
+### Processing Pipeline
 
 ```
-User selects folders → Size calculation → Multi-disc planning → Sequential burning
+User selects folders → Advanced planning with bin-packing → Session creation
                                       ↓
-                            If exceeds capacity: plan_disc_layout_with_progress()
+                     Sequential burning with pause/resume capability
                                       ↓
-                            Generate DiscPlan[] with file assignments
+                     Error recovery and user choice handling
                                       ↓
-                            For each disc: stage → create ISO → burn → index
+                     Database tracking and cleanup management
+                                      ↓
+                     Multi-disc verification and integrity checking
 ```
 
 ### Key Components
 
-- **`staging::plan_disc_layout_with_progress()`**: Main planning function with progress callbacks
-- **`staging::analyze_directory_structure()`**: Recursive directory analysis
-- **`DiscPlan`**: Represents content and layout for a single disc
-- **`DirectoryEntry`**: File/directory metadata with size and children
-- **Database Multi-disc Ops**: Set management and relationship tracking
+#### **Planning & Packing**
+- **`staging::plan_disc_layout_with_progress()`**: Advanced planning with real-time feedback
+- **`staging::sort_for_bin_packing()`**: Multi-heuristic item prioritization
+- **`staging::find_best_fit_disc()`**: Optimal disc selection algorithm
+- **`DiscPlan`**: Content layout representation with space utilization tracking
+
+#### **Session Management**
+- **`BurnSession`**: Complete session state with persistence
+- **`BurnSessionOps`**: Database operations for session management
+- **Pause/Resume UI**: User interface for session control and cleanup
+
+#### **Error Recovery**
+- **`MultiDiscError`**: Structured error types for different failure scenarios
+- **User Choice Prompts**: Interactive error recovery options
+- **Transactional Operations**: Database consistency during failures
+- **Cleanup Management**: Safe removal of failed session data
+
+#### **Verification**
+- **`verify_multi_disc_set()`**: Set-level verification orchestration
+- **`find_disc_mount_point()`**: Intelligent disc detection across mount points
+- **`MultiDiscVerificationResult`**: Comprehensive verification reporting
+- **Database Integration**: Historical verification result storage
 
 ## Disc Layout
 

@@ -7,8 +7,10 @@ use ratatui::{
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MainMenuAction {
     NewDisc,
+    ResumeBurn,
     SearchIndex,
     VerifyDisc,
+    VerifyMultiDisc,
     ListDiscs,
     Settings,
     Logs,
@@ -33,12 +35,12 @@ impl MainMenu {
     }
 
     pub fn next(&mut self) {
-        self.selected = (self.selected + 1) % 7;
+        self.selected = (self.selected + 1) % 10;
     }
 
     pub fn previous(&mut self) {
         if self.selected == 0 {
-            self.selected = 7;
+            self.selected = 9;
         } else {
             self.selected -= 1;
         }
@@ -47,13 +49,15 @@ impl MainMenu {
     pub fn selected_action(&self) -> MainMenuAction {
         match self.selected {
             0 => MainMenuAction::NewDisc,
-            1 => MainMenuAction::SearchIndex,
-            2 => MainMenuAction::VerifyDisc,
-            3 => MainMenuAction::ListDiscs,
-            4 => MainMenuAction::Settings,
-            5 => MainMenuAction::Logs,
-            6 => MainMenuAction::Cleanup,
-            7 => MainMenuAction::Quit,
+            1 => MainMenuAction::ResumeBurn,
+            2 => MainMenuAction::SearchIndex,
+            3 => MainMenuAction::VerifyDisc,
+            4 => MainMenuAction::VerifyMultiDisc,
+            5 => MainMenuAction::ListDiscs,
+            6 => MainMenuAction::Settings,
+            7 => MainMenuAction::Logs,
+            8 => MainMenuAction::Cleanup,
+            9 => MainMenuAction::Quit,
             _ => MainMenuAction::Quit,
         }
     }
@@ -61,8 +65,10 @@ impl MainMenu {
     pub fn render(&self, theme: &Theme, frame: &mut Frame, area: Rect) {
         let items = vec![
             ListItem::new("New Disc / Archive Folders"),
+            ListItem::new("⏸️  Resume Paused Burn"),
             ListItem::new("Search Index"),
             ListItem::new("Verify Disc"),
+            ListItem::new("🔍 Verify Multi-Disc Set"),
             ListItem::new("List Discs"),
             ListItem::new("Settings"),
             ListItem::new("Logs / Recent Runs"),
